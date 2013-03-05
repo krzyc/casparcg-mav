@@ -181,10 +181,8 @@ struct replay_producer : public core::frame_producer
 
 	long long length_index()
 	{
-		struct stat st;
-		stat(narrow(boost::filesystem::wpath(filename_).replace_extension(L".idx").string()).c_str(), &st);
-		_off_t size = st.st_size;
-		int el_size = (size - sizeof(mjpeg_file_header)) / sizeof(long long);
+		uintmax_t size = boost::filesystem::file_size(boost::filesystem::wpath(filename_).replace_extension(L".idx").string());
+		long long el_size = (size - sizeof(mjpeg_file_header)) / sizeof(long long);
 		return el_size;
 	}
 
@@ -199,7 +197,7 @@ struct replay_producer : public core::frame_producer
 	{
 		static const boost::wregex speed_exp(L"SPEED\\s+(?<VALUE>[\\d.-]+)", boost::regex::icase);
 		static const boost::wregex pause_exp(L"PAUSE", boost::regex::icase);
-		static const boost::wregex seek_exp(L"SEEK\\s+(?<SIGN>[+-|])?(?<VALUE>\\d+)", boost::regex::icase);
+		static const boost::wregex seek_exp(L"SEEK\\s+(?<SIGN>[\\+\\-\\|])?(?<VALUE>[\\d]+)", boost::regex::icase);
 		
 		boost::wsmatch what;
 		if(boost::regex_match(param, what, pause_exp))
@@ -211,7 +209,7 @@ struct replay_producer : public core::frame_producer
 		{
 			if(!what["VALUE"].str().empty())
 			{
-				float speed = boost::lexical_cast<float>(narrow(what["VALUE"].str()).c_str());
+				float speed = boost::lexical_cast<float>(what["VALUE"].str());
 				set_playback_speed(speed);
 			}
 			return L"";
@@ -225,12 +223,12 @@ struct replay_producer : public core::frame_producer
 					sign = 1;
 				else if (what["SIGN"].str() == L"|")
 					sign = -2;
-				else
+				else if (what["SIGN"].str() == L"-")
 					sign = -1;
 			}
 			if(!what["VALUE"].str().empty())
 			{
-				double position = boost::lexical_cast<double>(narrow(what["VALUE"].str()).c_str());
+				double position = boost::lexical_cast<double>(what["VALUE"].str());
 				long long frame_pos = 0;
 				if (interlaced_)
 					frame_pos = (long long)(position * 2.0);
@@ -663,7 +661,7 @@ safe_ptr<core::frame_producer> create_producer(const safe_ptr<core::frame_factor
 	if (params.size() >= 3) {
 		if (params[1] == L"SEEK")
 		{
-			static const boost::wregex seek_exp(L"(?<SIGN>[|])?(?<VALUE>\\d+)", boost::regex::icase);
+			static const boost::wregex seek_exp(L"(?<SIGN>[\\|])?(?<VALUE>[\\d]+)", boost::regex::icase);
 			boost::wsmatch what;
 			if(boost::regex_match(params[2], what, seek_exp))
 			{
