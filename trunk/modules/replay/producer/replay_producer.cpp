@@ -365,6 +365,10 @@ struct replay_producer : public core::frame_producer
 			// There is no last_field_ to base new field on
 			if (last_field_ == NULL)
 			{
+				sync_to_frame();
+
+				//printf("Generating new frame: %f\n", left_of_last_field_);
+
 				long long field1_pos = read_index(in_idx_file_);
 
 				if (field1_pos == -1)
@@ -392,23 +396,24 @@ struct replay_producer : public core::frame_producer
 				mmx_uint8_t* field2;
 				size_t field2_size = read_frame(in_file_, &field1_width, &field1_height, &field2);
 
-				mmx_uint8_t* field_blend = new mmx_uint8_t[field1_size];
-
-				float level = (1 - abs_speed_) * 2;
-				blend_images(field1, field2, field_blend, field1_width, field1_height, 4, (uint8_t)(level * 63.0));
-				left_of_last_field_ = modf(abs_speed_ * 2);
-
 				mmx_uint8_t* full_frame = new mmx_uint8_t[field1_size * 2];
-				proper_interlace(field1, field_blend, full_frame);
+				proper_interlace(field1, field2, full_frame);
 
 				result_framenum_++;
 
 				make_frame(full_frame, field1_size * 2, index_header_->width, index_header_->height, false);
 
-				last_field_ = field2;
-				last_field_size_ = field2_size;
-				delete field_blend;
-				delete full_frame;
+				last_field_ = full_frame;
+				last_field_size_ = field2_size + field1_size;
+				left_of_last_field_ = ((1.0f - (abs_speed_ - 0.5f)) * 2.0f) - 1.0f;
+
+				if (left_of_last_field_ <= 0)
+				{
+					delete last_field_;
+					last_field_ = NULL;
+				}
+
+				delete field2;
 				delete field1;
 
 				update_diag(frame_timer.elapsed());
@@ -417,113 +422,78 @@ struct replay_producer : public core::frame_producer
 			}
 			else
 			{
-				float left_in_field1 = 0;
-				float left_in_field2 = 0;
-				// last_field_, last_field_size_, left_of_last_field_
-				left_in_field1 += left_of_last_field_;
-
-				mmx_uint8_t* field1 = last_field_;
-				mmx_uint8_t* field2 = NULL;
-				size_t field1_size = last_field_size_;
-
-				if (left_in_field1 > 0.5f)
+				//printf("Left of last frame: %f\n", left_of_last_field_);
+				if (left_of_last_field_ >= 1.0f)
 				{
-					left_in_field2 = left_in_field1 - 0.5f;
-					field1 = new mmx_uint8_t[field1_size];
-					memcpy(field1, last_field_, field1_size);
-				}
-				else
-				{
-					long long field2_pos = read_index(in_idx_file_);
+					//printf("Using last frame\n");
+					make_frame(last_field_, last_field_size_, index_header_->width, index_header_->height, false);
+					left_of_last_field_ -= 1.0f;
 
-					if (field2_pos == -1)
-					{	// There are no more frames
-						result_framenum_++;
-						update_diag(frame_timer.elapsed());
-						return frame_;
-					}
-
-					move_to_next_frame();
-
-					seek_frame(in_file_, field2_pos, SEEK_SET);
-
-					size_t field2_width;
-					size_t field2_height;
-					size_t field2_size = read_frame(in_file_, &field2_width, &field2_height, &field2);
-
-					mmx_uint8_t* field_blend = new mmx_uint8_t[field1_size];
-
-					float level = (1 - left_in_field1);
-					blend_images(field1, field2, field_blend, field2_width, field2_height, 4, (uint8_t)(level * 63.0));
-
-					delete last_field_;
-					last_field_ = field2;
-					last_field_size_ = field2_size;
-					field1 = field_blend;
-
-					left_in_field2 = modf(left_in_field1 + abs_speed_);
-				}
-
-				bool field2_is_field1 = false;
-
-				if (left_in_field2 > 0.5f)
-				{
-					field2 = field1;
-					left_of_last_field_ = left_in_field2 - 0.5f;
-					field2_is_field1 = true;
-				}
-				else
-				{
-					long long field2_pos = read_index(in_idx_file_);
-
-					if (field2_pos == -1)
-					{	// There are no more frames
-						result_framenum_++;
-						update_diag(frame_timer.elapsed());
-						return frame_;
-					}
-
-					move_to_next_frame();
-
-					seek_frame(in_file_, field2_pos, SEEK_SET);
-
-					size_t field2_width;
-					size_t field2_height;
-					size_t field2_size = read_frame(in_file_, &field2_width, &field2_height, &field2);
-
-					mmx_uint8_t* field_blend = new mmx_uint8_t[field1_size];
-
-					if (left_in_field2 > 0)
+					if (left_of_last_field_ <= 0)
 					{
-						float level = (1 - left_in_field2);
-
-						blend_images(last_field_, field2, field_blend, field2_width, field2_height, 4, (uint8_t)(level * 63.0));
-					}
-					else
-					{
-						memcpy(field_blend, field2, field2_size);
+						delete last_field_;
+						last_field_ = NULL;
 					}
 
-					delete last_field_;
-					last_field_ = field2;
-					last_field_size_ = field2_size;
-					field2 = field_blend;
+					update_diag(frame_timer.elapsed());
 
-					left_of_last_field_ = modf(left_in_field2 + abs_speed_);
+					return frame_;
 				}
 
-				mmx_uint8_t* full_frame = new mmx_uint8_t[last_field_size_ * 2];
+				//printf("Blending with last frame\n");
+
+				long long field1_pos = read_index(in_idx_file_);
+
+				if (field1_pos == -1)
+				{	// There are no more frames
+					result_framenum_++;
+					update_diag(frame_timer.elapsed());
+					return frame_;
+				}
+
+				move_to_next_frame();
+
+				seek_frame(in_file_, field1_pos, SEEK_SET);
+
+				mmx_uint8_t* field1;
+				size_t field1_width;
+				size_t field1_height;
+				size_t field1_size = read_frame(in_file_, &field1_width, &field1_height, &field1);
+
+				long long field2_pos = read_index(in_idx_file_);
+
+				move_to_next_frame();
+
+				seek_frame(in_file_, field2_pos, SEEK_SET);
+
+				mmx_uint8_t* field2;
+				size_t field2_size = read_frame(in_file_, &field1_width, &field1_height, &field2);
+
+				mmx_uint8_t* full_frame = new mmx_uint8_t[field1_size * 2];
 				proper_interlace(field1, field2, full_frame);
 
 				result_framenum_++;
 
-				make_frame(full_frame, field1_size * 2, index_header_->width, index_header_->height, false);
+				mmx_uint8_t* final_frame = new mmx_uint8_t[field1_size * 2];
 
+				blend_images(full_frame, last_field_, final_frame, index_header_->width, index_header_->height, 4, (uint8_t)((1.0f - left_of_last_field_) * 64.0f));
+
+				make_frame(final_frame, field1_size * 2, index_header_->width, index_header_->height, false);
+
+				delete last_field_;
+				last_field_ = full_frame;
+				last_field_size_ = field2_size + field1_size;
+				left_of_last_field_ = left_of_last_field_ + ((1.0f - (abs_speed_ - 0.5f)) * 2.0f) - 1.0f;
+
+				if (left_of_last_field_ <= 0)
+				{
+					delete last_field_;
+					last_field_ = NULL;
+				}
+
+				delete final_frame;
+				delete field2;
 				delete field1;
-				if (!field2_is_field1)
-					delete field2;
-				delete full_frame;
-
 
 				update_diag(frame_timer.elapsed());
 

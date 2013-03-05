@@ -169,7 +169,7 @@ l1:
 	}
 
 #pragma warning(disable:4309 4244)
-	// max level is 63
+	// max level is 64
 	void blend_images(const mmx_uint8_t* src1, mmx_uint8_t* src2, mmx_uint8_t* dst, size_t width, size_t height, size_t stride, uint8_t level)
 	{
 		uint32_t full_size = width * height * stride;
@@ -178,7 +178,7 @@ l1:
 		{
 			for (auto i = r.begin(); i != r.end(); i++)
 			{
-				dst[i] = (uint8_t)((((uint16_t)src1[i] * level_16) >> 6) + (((uint16_t)src2[i] * (63 - level_16)) >> 6));
+				dst[i] = (uint8_t)((((uint16_t)src1[i] * level_16) >> 6) + (((uint16_t)src2[i] * (64 - level_16)) >> 6));
 			}
 		});
 	}
