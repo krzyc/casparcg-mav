@@ -172,7 +172,7 @@ struct replay_producer : public core::frame_producer
 		else
 		{
 			size_t line = width * 4;
-			std::copy_n(frame_data + line, size - line, frame->image_data().begin());
+			std::copy_n(frame_data, size - line, frame->image_data().begin() + line);
 		}
 		frame->commit();
 		frame_ = std::move(frame);
@@ -549,7 +549,7 @@ struct replay_producer : public core::frame_producer
 
 			result_framenum_++;
 
-			make_frame(full_frame, (interlaced_ ? field1_size * 2 : field1_size), index_header_->width, index_header_->height, (framenum_ % 2 != 0));
+			make_frame(full_frame, (interlaced_ ? field1_size * 2 : field1_size), index_header_->width, index_header_->height, (framenum_ % 2 != 1));
 
 			if (field1 != NULL)
 				delete field1;

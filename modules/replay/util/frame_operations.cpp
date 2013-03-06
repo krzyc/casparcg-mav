@@ -154,16 +154,27 @@ l1:
 			}
 		});
 	}
-
+	
 	void field_double(const mmx_uint8_t* src, mmx_uint8_t* dst, size_t width, size_t height, size_t stride)
 	{
 		size_t full_row = width * stride;
-		tbb::parallel_for(tbb::blocked_range<size_t>(0, height/2), [=](const tbb::blocked_range<size_t>& r)
+		/* tbb::parallel_for(tbb::blocked_range<size_t>(0, height/2), [=](const tbb::blocked_range<size_t>& r)
 		{
 			for (auto i = r.begin(); i != r.end(); ++i)
 			{
 				memcpy((dst + i * 2 * full_row), (src + i * full_row), full_row);
 				memcpy((dst + (i * 2 + 1) * full_row), (src + i  * full_row), full_row);
+			}
+		}); */
+		tbb::parallel_for(tbb::blocked_range<size_t>(0, height/2 - 1), [=](const tbb::blocked_range<size_t>& r)
+		{
+			for (auto i = r.begin(); i != r.end(); ++i)
+			{
+				for (uint32_t j = 0; j < full_row; ++j)
+				{
+					dst[i * 2 * full_row + j] = src[i * full_row + j];
+					dst[(i * 2 + 1) * full_row + j] = (src[i * full_row + j] >> 1) + (src[(i + 1) * full_row + j] >> 1);
+				}
 			}
 		});
 	}
