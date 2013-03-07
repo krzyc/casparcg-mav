@@ -21,6 +21,8 @@
 *		  Jan Starzak, jan@ministryofgoodsteps.com
 */
 
+#define NOMINMAX
+
 #include "replay_producer.h"
 
 #include <core/video_format.h>
@@ -52,6 +54,7 @@
 #include "../util/frame_operations.h"
 #include "../util/file_operations.h"
 
+#include <limits>
 #include <Windows.h>
 
 using namespace boost::assign;
@@ -67,6 +70,8 @@ struct replay_producer : public core::frame_producer
 	boost::shared_ptr<mjpeg_file_header>	index_header_;
 	safe_ptr<core::frame_factory>			frame_factory_;
 	tbb::atomic<uint64_t>					framenum_;
+	tbb::atomic<uint64_t>					first_framenum_;
+	tbb::atomic<uint64_t>					last_framenum_;
 	tbb::atomic<uint64_t>					result_framenum_;
 	uint8_t*								last_field_;
 	size_t									last_field_size_;
@@ -80,9 +85,7 @@ struct replay_producer : public core::frame_producer
 	bool									seeked_;
 	const safe_ptr<diagnostics::graph>		graph_;
 
-#define REPLAY_SEMI_SLOW_DISTANCE			12.0f
-
-	explicit replay_producer(const safe_ptr<core::frame_factory>& frame_factory, const std::wstring& filename, const int sign, const long long start_frame) 
+	explicit replay_producer(const safe_ptr<core::frame_factory>& frame_factory, const std::wstring& filename, const int sign, const long long start_frame, const long long last_frame, const float start_speed) 
 		: filename_(filename)
 		, frame_(core::basic_frame::empty())
 		, frame_factory_(frame_factory)
@@ -115,16 +118,19 @@ struct replay_producer : public core::frame_producer
 							interlaced_ = true;
 						}
 
-						set_playback_speed(1.0f);
+						set_playback_speed(start_speed);
 						result_framenum_ = 0;
 						framenum_ = 0;
+						last_framenum_ = 0;
+						first_framenum_ = 0;
 						left_of_last_field_ = 0;
 
 						last_field_ = NULL;
 
 						seeked_ = false;
 
-						if (start_frame > 0) {
+						if (start_frame > 0)
+						{
 							long long frame_pos;
 							if (interlaced_)
 								frame_pos = (long long)(start_frame * 2.0);
@@ -132,6 +138,13 @@ struct replay_producer : public core::frame_producer
 								frame_pos = (long long)start_frame;
 				
 							seek(frame_pos, sign);
+						}
+
+						if (last_frame > 0)
+						{
+							last_framenum_ = start_frame + last_frame;
+							if (interlaced_)
+								last_framenum_ = last_framenum_ * 2;
 						}
 
 						graph_->set_color("frame-time", diagnostics::color(0.1f, 1.0f, 0.1f));
@@ -198,6 +211,7 @@ struct replay_producer : public core::frame_producer
 		static const boost::wregex speed_exp(L"SPEED\\s+(?<VALUE>[\\d.-]+)", boost::regex::icase);
 		static const boost::wregex pause_exp(L"PAUSE", boost::regex::icase);
 		static const boost::wregex seek_exp(L"SEEK\\s+(?<SIGN>[\\+\\-\\|])?(?<VALUE>[\\d]+)", boost::regex::icase);
+		static const boost::wregex length_exp(L"LENGTH\\s+(?<VALUE>[\\d]+)", boost::regex::icase);
 		
 		boost::wsmatch what;
 		if(boost::regex_match(param, what, pause_exp))
@@ -239,6 +253,16 @@ struct replay_producer : public core::frame_producer
 			}
 			return L"";
 		}
+		if(boost::regex_match(param, what, length_exp))
+		{
+			if(!what["VALUE"].str().empty())
+			{
+				long long last_frame = boost::lexical_cast<long long>(what["VALUE"].str());
+				last_framenum_ = first_framenum_ + last_frame;
+				if (interlaced_)
+					last_framenum_ = last_framenum_ * 2;
+			}
+		}
 
 		BOOST_THROW_EXCEPTION(invalid_argument());
 	}
@@ -260,6 +284,7 @@ struct replay_producer : public core::frame_producer
 			framenum_ = framenum_ + (sign * frame_pos);
 			seek_index(in_idx_file_, (frame_pos) * sign, SEEK_CUR);
 		}
+		first_framenum_ = framenum_;
 		seeked_ = true;
 	}
 
@@ -335,6 +360,16 @@ struct replay_producer : public core::frame_producer
 	virtual safe_ptr<core::basic_frame> receive(int hint)
 	{
 		boost::timer frame_timer;
+
+		if (last_framenum_ > 0)
+		{
+			if (last_framenum_ <= framenum_)
+			{
+				update_diag(frame_timer.elapsed());
+				frame_ = core::basic_frame::eof();
+				return frame_;
+			}
+		}
 
 		// IF is paused
 		if (speed_ == 0.0f) 
@@ -590,10 +625,16 @@ struct replay_producer : public core::frame_producer
 		return frame_;
 	}
 
+#pragma warning (disable: 4244)
 	virtual uint32_t nb_frames() const override
 	{
-		return 1000;
+		if (last_framenum_ > 0)
+		{
+			return (uint32_t)((interlaced_ ? ((last_framenum_ - first_framenum_) / 2) : (last_framenum_ - first_framenum_)) / speed_);
+		}
+		return std::numeric_limits<uint32_t>::max();
 	}
+#pragma warning (default: 4244)
 
 	virtual std::wstring print() const override
 	{
@@ -628,31 +669,59 @@ safe_ptr<core::frame_producer> create_producer(const safe_ptr<core::frame_factor
 
 	int sign = 0;
 	long long start_frame = 0;
+	long long last_frame = 0;
+	float start_speed = 1.0f;
 	if (params.size() >= 3) {
-		if (params[1] == L"SEEK")
-		{
-			static const boost::wregex seek_exp(L"(?<SIGN>[\\|])?(?<VALUE>[\\d]+)", boost::regex::icase);
-			boost::wsmatch what;
-			if(boost::regex_match(params[2], what, seek_exp))
+		for (uint16_t i=0; i<params.size(); i++) {
+			if (params[i] == L"SEEK")
 			{
+				static const boost::wregex seek_exp(L"(?<SIGN>[\\|])?(?<VALUE>[\\d]+)", boost::regex::icase);
+				boost::wsmatch what;
+				if(boost::regex_match(params[i+1], what, seek_exp))
+				{
 				
-				if(!what["SIGN"].str().empty())
-				{
-					if (what["SIGN"].str() == L"|")
-						sign = -2;
-					else
-						sign = 0;
+					if(!what["SIGN"].str().empty())
+					{
+						if (what["SIGN"].str() == L"|")
+							sign = -2;
+						else
+							sign = 0;
+					}
+					if(!what["VALUE"].str().empty())
+					{
+						start_frame = boost::lexical_cast<long long>(narrow(what["VALUE"].str()).c_str());
+					}
 				}
-				if(!what["VALUE"].str().empty())
+			}
+			else if (params[i] == L"SPEED")
+			{
+				static const boost::wregex speed_exp(L"(?<VALUE>[\\d.-]+)", boost::regex::icase);
+				boost::wsmatch what;
+				if (boost::regex_match(params[i+1], what, speed_exp))
 				{
-					start_frame = boost::lexical_cast<long long>(narrow(what["VALUE"].str()).c_str());
+					if (!what["VALUE"].str().empty())
+					{
+						start_speed = boost::lexical_cast<float>(what["VALUE"].str());
+					}
+				}
+			}
+			else if (params[i] == L"LENGTH")
+			{
+				static const boost::wregex speed_exp(L"(?<VALUE>[\\d]+)", boost::regex::icase);
+				boost::wsmatch what;
+				if (boost::regex_match(params[i+1], what, speed_exp))
+				{
+					if (!what["VALUE"].str().empty())
+					{
+						last_frame = boost::lexical_cast<long long>(what["VALUE"].str());
+					}
 				}
 			}
 		}
 	}
 
 	return create_producer_print_proxy(
-			make_safe<replay_producer>(frame_factory, filename + L"." + *ext, sign, start_frame));
+			make_safe<replay_producer>(frame_factory, filename + L"." + *ext, sign, start_frame, last_frame, start_speed));
 }
 
 
