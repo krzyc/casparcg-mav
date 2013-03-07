@@ -246,9 +246,9 @@ copy "$(ProjectDir)casparcg.config" "$(OutDir)"</Command>
       </Version>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories);..\dependencies\libjpeg-turbo\lib</AdditionalLibraryDirectories>
       <IgnoreSpecificDefaultLibraries>LIBC.lib</IgnoreSpecificDefaultLibraries>
-      <GenerateDebugInformation>true</GenerateDebugInformation>
-      <GenerateMapFile>true</GenerateMapFile>
-      <MapExports>true</MapExports>
+      <GenerateDebugInformation>false</GenerateDebugInformation>
+      <GenerateMapFile>false</GenerateMapFile>
+      <MapExports>false</MapExports>
       <SubSystem>Console</SubSystem>
       <OptimizeReferences>
       </OptimizeReferences>
