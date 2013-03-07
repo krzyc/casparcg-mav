@@ -396,7 +396,7 @@ struct replay_producer : public core::frame_producer
 				return frame_; // Return previous frame
 			}
 		}
-		else if ((abs_speed_ > 0.5f) && (abs_speed_ < 1.0f) && (interlaced_))
+		else if ((abs_speed_ > 0.5f) && (abs_speed_ < 1.0f))
 		{
 			// There is no last_field_ to base new field on
 			if (last_field_ == NULL)
@@ -418,29 +418,40 @@ struct replay_producer : public core::frame_producer
 
 				seek_frame(in_file_, field1_pos, SEEK_SET);
 
-				mmx_uint8_t* field1;
+				mmx_uint8_t* field1 = NULL;
+				mmx_uint8_t* field2 = NULL;
+				mmx_uint8_t* full_frame = NULL;
 				size_t field1_width;
 				size_t field1_height;
 				size_t field1_size = read_frame(in_file_, &field1_width, &field1_height, &field1);
 
-				long long field2_pos = read_index(in_idx_file_);
+				if (interlaced_)
+				{
+					long long field2_pos = read_index(in_idx_file_);
 
-				move_to_next_frame();
+					move_to_next_frame();
 
-				seek_frame(in_file_, field2_pos, SEEK_SET);
+					seek_frame(in_file_, field2_pos, SEEK_SET);
 
-				mmx_uint8_t* field2;
-				size_t field2_size = read_frame(in_file_, &field1_width, &field1_height, &field2);
+					size_t field2_size = read_frame(in_file_, &field1_width, &field1_height, &field2);
 
-				mmx_uint8_t* full_frame = new mmx_uint8_t[field1_size * 2];
-				proper_interlace(field1, field2, full_frame);
+					full_frame = new mmx_uint8_t[field1_size * 2];
+					proper_interlace(field1, field2, full_frame);
+
+					make_frame(full_frame, field1_size * 2, index_header_->width, index_header_->height, false);
+
+					last_field_size_ = field2_size + field1_size;
+				}
+				else
+				{
+					full_frame = field1;
+					last_field_size_ = field1_size;
+					field1 = NULL;
+				}
 
 				result_framenum_++;
 
-				make_frame(full_frame, field1_size * 2, index_header_->width, index_header_->height, false);
-
 				last_field_ = full_frame;
-				last_field_size_ = field2_size + field1_size;
 				left_of_last_field_ = ((1.0f - (abs_speed_ - 0.5f)) * 2.0f) - 1.0f;
 
 				if (left_of_last_field_ <= 0)
@@ -449,8 +460,10 @@ struct replay_producer : public core::frame_producer
 					last_field_ = NULL;
 				}
 
-				delete field2;
-				delete field1;
+				if (field2 != NULL)
+					delete field2;
+				if (field1 != NULL)
+					delete field1;
 
 				update_diag(frame_timer.elapsed());
 
@@ -491,34 +504,46 @@ struct replay_producer : public core::frame_producer
 
 				seek_frame(in_file_, field1_pos, SEEK_SET);
 
-				mmx_uint8_t* field1;
+				mmx_uint8_t* field1 = NULL;
+				mmx_uint8_t* field2 = NULL;
+				mmx_uint8_t* full_frame = NULL;
 				size_t field1_width;
 				size_t field1_height;
 				size_t field1_size = read_frame(in_file_, &field1_width, &field1_height, &field1);
 
-				long long field2_pos = read_index(in_idx_file_);
+				if (interlaced_)
+				{
+					long long field2_pos = read_index(in_idx_file_);
 
-				move_to_next_frame();
+					move_to_next_frame();
 
-				seek_frame(in_file_, field2_pos, SEEK_SET);
+					seek_frame(in_file_, field2_pos, SEEK_SET);
 
-				mmx_uint8_t* field2;
-				size_t field2_size = read_frame(in_file_, &field1_width, &field1_height, &field2);
+				
+					size_t field2_size = read_frame(in_file_, &field1_width, &field1_height, &field2);
 
-				mmx_uint8_t* full_frame = new mmx_uint8_t[field1_size * 2];
-				proper_interlace(field1, field2, full_frame);
+					full_frame = new mmx_uint8_t[field1_size * 2];
+					proper_interlace(field1, field2, full_frame);
+
+					last_field_size_ = field2_size + field1_size;
+				}
+				else
+				{
+					last_field_size_ = field1_size;
+					full_frame = field1;
+					field1 = NULL;
+				}
 
 				result_framenum_++;
 
-				mmx_uint8_t* final_frame = new mmx_uint8_t[field1_size * 2];
+				mmx_uint8_t* final_frame = new mmx_uint8_t[last_field_size_];
 
 				blend_images(full_frame, last_field_, final_frame, index_header_->width, index_header_->height, 4, (uint8_t)((1.0f - left_of_last_field_) * 64.0f));
 
-				make_frame(final_frame, field1_size * 2, index_header_->width, index_header_->height, false);
+				make_frame(final_frame, last_field_size_, index_header_->width, index_header_->height, false);
 
 				delete last_field_;
 				last_field_ = full_frame;
-				last_field_size_ = field2_size + field1_size;
 				left_of_last_field_ = left_of_last_field_ + ((1.0f - (abs_speed_ - 0.5f)) * 2.0f) - 1.0f;
 
 				if (left_of_last_field_ <= 0)
@@ -528,8 +553,10 @@ struct replay_producer : public core::frame_producer
 				}
 
 				delete final_frame;
-				delete field2;
-				delete field1;
+				if (field2 != NULL)
+					delete field2;
+				if (field1 != NULL)
+					delete field1;
 
 				update_diag(frame_timer.elapsed());
 
@@ -563,7 +590,9 @@ struct replay_producer : public core::frame_producer
 
 		seek_frame(in_file_, field1_pos, SEEK_SET);
 
-		mmx_uint8_t* field1;
+		mmx_uint8_t* field1 = NULL;
+		mmx_uint8_t* field2 = NULL;
+		mmx_uint8_t* full_frame = NULL;
 		size_t field1_width;
 		size_t field1_height;
 		size_t field1_size = read_frame(in_file_, &field1_width, &field1_height, &field1);
@@ -597,23 +626,34 @@ struct replay_producer : public core::frame_producer
 			return frame_;
 		}
 
-		long long field2_pos = read_index(in_idx_file_);
+		if (interlaced_) 
+		{
+			long long field2_pos = read_index(in_idx_file_);
 
-		move_to_next_frame();
+			move_to_next_frame();
 
-		seek_frame(in_file_, field2_pos, SEEK_SET);
+			seek_frame(in_file_, field2_pos, SEEK_SET);
 
-		mmx_uint8_t* field2;
-		size_t field2_size = read_frame(in_file_, &field1_width, &field1_height, &field2);
+			size_t field2_size = read_frame(in_file_, &field1_width, &field1_height, &field2);
 
-		mmx_uint8_t* full_frame = new mmx_uint8_t[field1_size + field2_size];
+			full_frame = new mmx_uint8_t[field1_size + field2_size];
 
-		proper_interlace(field1, field2, full_frame);
+			proper_interlace(field1, field2, full_frame);
 		
-		make_frame(full_frame, field1_size + field2_size, index_header_->width, index_header_->height, false);
+			make_frame(full_frame, field1_size + field2_size, index_header_->width, index_header_->height, false);
+		}
+		else
+		{
+			full_frame = field1;
+			field1 = NULL;
 
-		delete field1;
-		delete field2;
+			make_frame(full_frame, field1_size, index_header_->width, index_header_->height, false);
+		}
+
+		if (field1 != NULL)
+			delete field1;
+		if (field2 != NULL)
+			delete field2;
 		delete full_frame;
 
 		update_diag(frame_timer.elapsed());
