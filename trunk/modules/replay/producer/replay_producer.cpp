@@ -262,6 +262,7 @@ struct replay_producer : public core::frame_producer
 				if (interlaced_)
 					last_framenum_ = last_framenum_ * 2;
 			}
+			return L"";
 		}
 
 		BOOST_THROW_EXCEPTION(invalid_argument());
