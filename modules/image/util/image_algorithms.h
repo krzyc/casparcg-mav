@@ -21,7 +21,7 @@
 
 #pragma once
 
-#include <common/utility/tweener.h>
+#include <common/tweener.h>
 
 #include <cmath>
 #include <boost/foreach.hpp>
@@ -64,7 +64,7 @@ public:
 };
 
 template<class T>
-std::vector<T> get_tweened_values(caspar::tweener_t& tweener, size_t num_values, T from, T to)
+std::vector<T> get_tweened_values(const core::tweener& tweener, size_t num_values, T from, T to)
 {
 	std::vector<T> result;
 	result.reserve(num_values);
@@ -106,9 +106,9 @@ void blur(
 	const SrcView& src,
 	DstView& dst,
 	const std::vector<std::pair<int, int>> motion_trail_coordinates, 
-	caspar::tweener_t& tweener)
+	const core::tweener& tweener)
 {
-	int blur_px = motion_trail_coordinates.size();
+	auto blur_px = motion_trail_coordinates.size();
 	auto tweened_weights_y = get_tweened_values<uint8_t>(tweener, blur_px + 2, 255, 0);
 	tweened_weights_y.pop_back();
 	tweened_weights_y.erase(tweened_weights_y.begin());
@@ -129,11 +129,6 @@ void blur(
 				break;
 
 			w.add_pixel(*other_pixel, tweened_weights_y[i]);
-
-			/*other_pixel = src.relative(src_iter, -coordinate.first, -coordinate.second);
-
-			if (other_pixel)
-				w.add_pixel(*other_pixel, tweened_weights_y[i]);*/
 		}
 
 		w.add_pixel(*src_iter, 255);
@@ -192,7 +187,7 @@ void blur(
 	DstView& dst,
 	double angle_radians,
 	int blur_px, 
-	caspar::tweener_t& tweener)
+	const core::tweener& tweener)
 {
 	auto motion_trail = get_line_points(blur_px, angle_radians);
 

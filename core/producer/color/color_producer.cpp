@@ -23,11 +23,15 @@
 
 #include "color_producer.h"
 
-#include "../frame/basic_frame.h"
-#include "../frame/frame_factory.h"
-#include "../../mixer/write_frame.h"
+#include <core/producer/frame_producer.h>
+#include <core/frame/frame.h>
+#include <core/frame/draw_frame.h>
+#include <core/frame/frame_factory.h>
+#include <core/frame/pixel_format.h>
+#include <core/monitor/monitor.h>
 
-#include <common/exception/exceptions.h>
+#include <common/except.h>
+#include <common/array.h>
 
 #include <boost/algorithm/string.hpp>
 
@@ -35,40 +39,56 @@
 
 namespace caspar { namespace core {
 	
-class color_producer : public frame_producer
+class color_producer : public frame_producer_base
 {
-	safe_ptr<basic_frame> frame_;
-	const std::wstring color_str_;
+	monitor::basic_subject	event_subject_;
+
+	draw_frame				frame_;
+	const std::wstring		color_str_;
 
 public:
-	explicit color_producer(const safe_ptr<core::frame_factory>& frame_factory, const std::wstring& color) 
+	explicit color_producer(const spl::shared_ptr<core::frame_factory>& frame_factory, const std::wstring& color) 
 		: color_str_(color)
 		, frame_(create_color_frame(this, frame_factory, color))
-	{}
+	{
+		CASPAR_LOG(info) << print() << L" Initialized";
+	}
 
 	// frame_producer
 			
-	virtual safe_ptr<basic_frame> receive(int) override
+	draw_frame receive_impl() override
 	{
+		event_subject_ << monitor::event("color") % color_str_;
+
 		return frame_;
 	}	
-
-	virtual safe_ptr<basic_frame> last_frame() const override
-	{
-		return frame_; 
-	}	
-
-	virtual std::wstring print() const override
+	
+	std::wstring print() const override
 	{
 		return L"color[" + color_str_ + L"]";
 	}
 
+	std::wstring name() const override
+	{
+		return L"color";
+	}
+	
 	boost::property_tree::wptree info() const override
 	{
 		boost::property_tree::wptree info;
-		info.add(L"type", L"color-producer");
+		info.add(L"type", L"color");
 		info.add(L"color", color_str_);
 		return info;
+	}
+
+	void subscribe(const monitor::observable::observer_ptr& o) override															
+	{
+		return event_subject_.subscribe(o);
+	}
+
+	void unsubscribe(const monitor::observable::observer_ptr& o) override		
+	{
+		return event_subject_.unsubscribe(o);
 	}
 };
 
@@ -113,7 +133,7 @@ std::wstring get_hex_color(const std::wstring& str)
 	return str;
 }
 
-safe_ptr<frame_producer> create_color_producer(const safe_ptr<core::frame_factory>& frame_factory, const std::vector<std::wstring>& params)
+spl::shared_ptr<frame_producer> create_color_producer(const spl::shared_ptr<frame_factory>& frame_factory, const std::vector<std::wstring>& params)
 {
 	if(params.size() < 0)
 		return core::frame_producer::empty();
@@ -122,30 +142,27 @@ safe_ptr<frame_producer> create_color_producer(const safe_ptr<core::frame_factor
 	if(color2.length() != 9 || color2[0] != '#')
 		return core::frame_producer::empty();
 
-	return create_producer_print_proxy(
-			make_safe<color_producer>(frame_factory, color2));
+	return spl::make_shared<color_producer>(frame_factory, color2);
 }
-safe_ptr<core::write_frame> create_color_frame(void* tag, const safe_ptr<core::frame_factory>& frame_factory, const std::wstring& color)
+
+draw_frame create_color_frame(void* tag, const spl::shared_ptr<frame_factory>& frame_factory, const std::wstring& color)
 {
 	auto color2 = get_hex_color(color);
 	if(color2.length() != 9 || color2[0] != '#')
-		BOOST_THROW_EXCEPTION(invalid_argument() << arg_name_info("color") << arg_value_info(narrow(color2)) << msg_info("Invalid color."));
+		CASPAR_THROW_EXCEPTION(invalid_argument() << arg_name_info("color") << arg_value_info(color2) << msg_info("Invalid color."));
 	
-	core::pixel_format_desc desc;
-	desc.pix_fmt = pixel_format::bgra;
+	core::pixel_format_desc desc(pixel_format::bgra);
 	desc.planes.push_back(core::pixel_format_desc::plane(1, 1, 4));
 	auto frame = frame_factory->create_frame(tag, desc);
 		
 	// Read color from hex-string and write to frame pixel.
 
-	auto& value = *reinterpret_cast<uint32_t*>(frame->image_data().begin());
+	auto& value = *reinterpret_cast<uint32_t*>(frame.image_data(0).begin());
 	std::wstringstream str(color2.substr(1));
 	if(!(str >> std::hex >> value) || !str.eof())
-		BOOST_THROW_EXCEPTION(invalid_argument() << arg_name_info("color") << arg_value_info(narrow(color2)) << msg_info("Invalid color."));
-
-	frame->commit();
-		
-	return frame;
+		CASPAR_THROW_EXCEPTION(invalid_argument() << arg_name_info("color") << arg_value_info(color2) << msg_info("Invalid color."));
+			
+	return core::draw_frame(std::move(frame));
 }
 
 }}

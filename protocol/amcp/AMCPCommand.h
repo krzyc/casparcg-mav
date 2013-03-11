@@ -30,14 +30,7 @@
 
 namespace caspar { namespace protocol {
 namespace amcp {
-
-	enum AMCPCommandScheduling
-	{
-		Default = 0,
-		AddToQueue,
-		ImmediatelyAndClear
-	};
-
+	
 	class AMCPCommand
 	{
 		AMCPCommand(const AMCPCommand&);
@@ -48,7 +41,6 @@ namespace amcp {
 		virtual bool Execute() = 0;
 
 		virtual bool NeedChannel() = 0;
-		virtual AMCPCommandScheduling GetDefaultScheduling() = 0;
 		virtual int GetMinimumParameters() = 0;
 
 		void SendReply();
@@ -61,8 +53,8 @@ namespace amcp {
 		void SetChannel(const std::shared_ptr<core::video_channel>& pChannel){pChannel_ = pChannel;}
 		std::shared_ptr<core::video_channel> GetChannel(){return pChannel_;}
 
-		void SetChannels(const std::vector<safe_ptr<core::video_channel>>& channels){channels_ = channels;}
-		const std::vector<safe_ptr<core::video_channel>>& GetChannels() { return channels_; }
+		void SetChannels(const std::vector<spl::shared_ptr<core::video_channel>>& channels){channels_ = channels;}
+		const std::vector<spl::shared_ptr<core::video_channel>>& GetChannels() { return channels_; }
 
 		void SetChannelIndex(unsigned int channelIndex){channelIndex_ = channelIndex;}
 		unsigned int GetChannelIndex(){return channelIndex_;}
@@ -72,14 +64,8 @@ namespace amcp {
 
 		virtual void Clear();
 
-		AMCPCommandScheduling GetScheduling()
-		{
-			return scheduling_ == Default ? GetDefaultScheduling() : scheduling_;
-		}
-
 		virtual std::wstring print() const = 0;
 
-		void SetScheduling(AMCPCommandScheduling s){scheduling_ = s;}
 		void SetReplyString(const std::wstring& str){replyString_ = str;}
 
 	protected:
@@ -91,14 +77,13 @@ namespace amcp {
 		int layerIndex_;
 		IO::ClientInfoPtr pClientInfo_;
 		std::shared_ptr<core::video_channel> pChannel_;
-		std::vector<safe_ptr<core::video_channel>> channels_;
-		AMCPCommandScheduling scheduling_;
+		std::vector<spl::shared_ptr<core::video_channel>> channels_;
 		std::wstring replyString_;
 	};
 
 	typedef std::tr1::shared_ptr<AMCPCommand> AMCPCommandPtr;
 
-	template<bool TNeedChannel, AMCPCommandScheduling TScheduling, int TMinParameters>
+	template<bool TNeedChannel,int TMinParameters>
 	class AMCPCommandBase : public AMCPCommand
 	{
 	public:
@@ -111,7 +96,6 @@ namespace amcp {
 		}
 
 		virtual bool NeedChannel(){return TNeedChannel;}		
-		virtual AMCPCommandScheduling GetDefaultScheduling(){return TScheduling;}
 		virtual int GetMinimumParameters(){return TMinParameters;}
 	protected:
 		~AMCPCommandBase(){}

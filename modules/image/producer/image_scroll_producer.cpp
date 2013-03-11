@@ -28,68 +28,67 @@
 
 #include <core/video_format.h>
 
-#include <core/producer/frame/basic_frame.h>
-#include <core/producer/frame/frame_factory.h>
-#include <core/producer/frame/frame_transform.h>
-#include <core/mixer/write_frame.h>
+#include <core/frame/frame.h>
+#include <core/frame/draw_frame.h>
+#include <core/frame/frame_factory.h>
+#include <core/frame/frame_transform.h>
+#include <core/frame/pixel_format.h>
+#include <core/monitor/monitor.h>
 
 #include <common/env.h>
-#include <common/log/log.h>
-#include <common/memory/memclr.h>
-#include <common/exception/exceptions.h>
-#include <common/utility/tweener.h>
+#include <common/log.h>
+#include <common/except.h>
+#include <common/array.h>
+#include <common/tweener.h>
 
 #include <boost/assign.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/foreach.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/property_tree/ptree.hpp>
-#include <boost/gil/gil_all.hpp>
+#include <boost/scoped_array.hpp>
 
 #include <algorithm>
 #include <array>
-#include <boost/math/special_functions/round.hpp>
-#include <boost/scoped_array.hpp>
 
 using namespace boost::assign;
 
 namespace caspar { namespace image {
-
-struct image_scroll_producer : public core::frame_producer
+		
+struct image_scroll_producer : public core::frame_producer_base
 {	
-	const std::wstring							filename_;
-	std::vector<safe_ptr<core::basic_frame>>	frames_;
-	core::video_format_desc						format_desc_;
-	size_t										width_;
-	size_t										height_;
+	monitor::basic_subject			event_subject_;
 
-	double										delta_;
-	double										speed_;
+	const std::wstring				filename_;
+	std::vector<core::draw_frame>	frames_;
+	core::video_format_desc			format_desc_;
+	int								width_;
+	int								height_;
 
-	int											start_offset_x_;
-	int											start_offset_y_;
-	bool										progressive_;
+	double							delta_;
+	double							speed_;
 
-	safe_ptr<core::basic_frame>					last_frame_;
+	int								start_offset_x_;
+	int								start_offset_y_;
+	bool							progressive_;
 	
 	explicit image_scroll_producer(
-		const safe_ptr<core::frame_factory>& frame_factory, 
+		const spl::shared_ptr<core::frame_factory>& frame_factory, 
+		const core::video_format_desc& format_desc, 
 		const std::wstring& filename, 
 		double speed,
 		double duration,
 		int motion_blur_px = 0,
 		bool premultiply_with_alpha = false,
-		bool progressive = false) 
+		bool progressive = false)
 		: filename_(filename)
 		, delta_(0)
-		, format_desc_(frame_factory->get_video_format_desc())
+		, format_desc_(format_desc)
 		, speed_(speed)
+		, start_offset_x_(0)
+		, start_offset_y_(0)
 		, progressive_(progressive)
-		, last_frame_(core::basic_frame::empty())
 	{
-		start_offset_x_ = 0;
-		start_offset_y_ = 0;
-
 		auto bitmap = load_image(filename_);
 		FreeImage_FlipVertical(bitmap.get());
 
@@ -116,7 +115,9 @@ struct image_scroll_producer : public core::frame_producer
 			}
 
 			if (speed_ < 0.0)
+			{
 				start_offset_y_ = height_ + format_desc_.height;
+			}
 		}
 		else
 		{
@@ -137,7 +138,7 @@ struct image_scroll_producer : public core::frame_producer
 		}
 
 		auto bytes = FreeImage_GetBits(bitmap.get());
-		int count = width_*height_*4;
+		auto count = width_*height_*4;
 		image_view<bgra_pixel> original_view(bytes, width_, height_);
 
 		if (premultiply_with_alpha)
@@ -158,7 +159,7 @@ struct image_scroll_producer : public core::frame_producer
 
 			blurred_copy.reset(new uint8_t[count]);
 			image_view<bgra_pixel> blurred_view(blurred_copy.get(), width_, height_);
-			tweener_t blur_tweener = get_tweener(L"easeInQuad");
+			core::tweener blur_tweener(L"easeInQuad");
 			blur(original_view, blurred_view, angle, motion_blur_px, blur_tweener);
 			bytes = blurred_copy.get();
 			bitmap.reset();
@@ -170,60 +171,57 @@ struct image_scroll_producer : public core::frame_producer
 
 			while(count > 0)
 			{
-				core::pixel_format_desc desc;
-				desc.pix_fmt = core::pixel_format::bgra;
+				core::pixel_format_desc desc = core::pixel_format::bgra;
 				desc.planes.push_back(core::pixel_format_desc::plane(width_, format_desc_.height, 4));
 				auto frame = frame_factory->create_frame(reinterpret_cast<void*>(rand()), desc);
 
-				if(count >= frame->image_data().size())
+				if(count >= frame.image_data(0).size())
 				{	
-					std::copy_n(bytes + count - frame->image_data().size(), frame->image_data().size(), frame->image_data().begin());
-					count -= frame->image_data().size();
+					std::copy_n(bytes + count - frame.image_data(0).size(), frame.image_data(0).size(), frame.image_data(0).begin());
+					count -= static_cast<int>(frame.image_data(0).size());
 				}
 				else
 				{
-					fast_memclr(frame->image_data().begin(), frame->image_data().size());	
-					std::copy_n(bytes, count, frame->image_data().begin() + format_desc_.size - count);
+					memset(frame.image_data(0).begin(), 0, frame.image_data(0).size());	
+					std::copy_n(bytes, count, frame.image_data(0).begin() + format_desc_.size - count);
 					count = 0;
 				}
 
-				frame->commit();
-				frames_.push_back(frame);
+				core::draw_frame draw_frame(std::move(frame));
 
 				// Set the relative position to the other image fragments
-				frame->get_frame_transform().fill_translation[1] = - n++;
-			}
+				draw_frame.transform().image_transform.fill_translation[1] = - n++;
 
+				frames_.push_back(draw_frame);
+			}
 		}
 		else if (horizontal)
 		{
 			int i = 0;
 			while(count > 0)
 			{
-				core::pixel_format_desc desc;
-				desc.pix_fmt = core::pixel_format::bgra;
+				core::pixel_format_desc desc = core::pixel_format::bgra;
 				desc.planes.push_back(core::pixel_format_desc::plane(format_desc_.width, height_, 4));
 				auto frame = frame_factory->create_frame(reinterpret_cast<void*>(rand()), desc);
-				if(count >= frame->image_data().size())
+				if(count >= frame.image_data(0).size())
 				{	
-					for(size_t y = 0; y < height_; ++y)
-						std::copy_n(bytes + i * format_desc_.width*4 + y * width_*4, format_desc_.width*4, frame->image_data().begin() + y * format_desc_.width*4);
+					for(int y = 0; y < height_; ++y)
+						std::copy_n(bytes + i * format_desc_.width*4 + y * width_*4, format_desc_.width*4, frame.image_data(0).begin() + y * format_desc_.width*4);
 					
 					++i;
-					count -= frame->image_data().size();
+					count -= static_cast<int>(frame.image_data(0).size());
 				}
 				else
 				{
-					fast_memclr(frame->image_data().begin(), frame->image_data().size());	
-					int width2 = width_ % format_desc_.width;
-					for(size_t y = 0; y < height_; ++y)
-						std::copy_n(bytes + i * format_desc_.width*4 + y * width_*4, width2*4, frame->image_data().begin() + y * format_desc_.width*4);
+					memset(frame.image_data(0).begin(), 0, frame.image_data(0).size());	
+					auto width2 = width_ % format_desc_.width;
+					for(int y = 0; y < height_; ++y)
+						std::copy_n(bytes + i * format_desc_.width*4 + y * width_*4, width2*4, frame.image_data(0).begin() + y * format_desc_.width*4);
 
 					count = 0;
 				}
 			
-				frame->commit();
-				frames_.push_back(frame);
+				frames_.push_back(core::draw_frame(std::move(frame)));
 			}
 
 			std::reverse(frames_.begin(), frames_.end());
@@ -232,21 +230,21 @@ struct image_scroll_producer : public core::frame_producer
 			for (size_t n = 0; n < frames_.size(); ++n)
 			{
 				double translation = - (static_cast<double>(n) + 1.0);
-				frames_[n]->get_frame_transform().fill_translation[0] = translation;
+				frames_[n].transform().image_transform.fill_translation[0] = translation;
 			}
 		}
 
 		CASPAR_LOG(info) << print() << L" Initialized";
 	}
 
-	std::vector<safe_ptr<core::basic_frame>> get_visible()
+	std::vector<core::draw_frame> get_visible()
 	{
-		std::vector<safe_ptr<core::basic_frame>> result;
+		std::vector<core::draw_frame> result;
 		result.reserve(frames_.size());
 
 		BOOST_FOREACH(auto& frame, frames_)
 		{
-			auto& fill_translation = frame->get_frame_transform().fill_translation;
+			auto& fill_translation = frame.transform().image_transform.fill_translation;
 
 			if (width_ == format_desc_.width)
 			{
@@ -276,19 +274,18 @@ struct image_scroll_producer : public core::frame_producer
 	}
 	
 	// frame_producer
-
-	safe_ptr<core::basic_frame> render_frame(bool allow_eof)
+	core::draw_frame render_frame(bool allow_eof)
 	{
 		if(frames_.empty())
-			return core::basic_frame::eof();
+			return core::draw_frame::empty();
 		
-		auto result = make_safe<core::basic_frame>(get_visible());
-		auto& fill_translation = result->get_frame_transform().fill_translation;
+		core::draw_frame result(get_visible());
+		auto& fill_translation = result.transform().image_transform.fill_translation;
 
 		if (width_ == format_desc_.width)
 		{
 			if (static_cast<size_t>(std::abs(delta_)) >= height_ + format_desc_.height && allow_eof)
-				return core::basic_frame::eof();
+				return core::draw_frame::empty();
 
 			fill_translation[1] = 
 				static_cast<double>(start_offset_y_) / static_cast<double>(format_desc_.height)
@@ -297,7 +294,7 @@ struct image_scroll_producer : public core::frame_producer
 		else
 		{
 			if (static_cast<size_t>(std::abs(delta_)) >= width_ + format_desc_.width && allow_eof)
-				return core::basic_frame::eof();
+				return core::draw_frame::empty();
 
 			fill_translation[0] = 
 				static_cast<double>(start_offset_x_) / static_cast<double>(format_desc_.width)
@@ -307,7 +304,7 @@ struct image_scroll_producer : public core::frame_producer
 		return result;
 	}
 
-	safe_ptr<core::basic_frame> render_frame(bool allow_eof, bool advance_delta)
+	core::draw_frame render_frame(bool allow_eof, bool advance_delta)
 	{
 		auto result = render_frame(allow_eof);
 
@@ -324,18 +321,20 @@ struct image_scroll_producer : public core::frame_producer
 		delta_ += speed_;
 	}
 
-	virtual safe_ptr<core::basic_frame> receive(int) override
+	core::draw_frame receive_impl() override
 	{
+		core::draw_frame result;
+
 		if (format_desc_.field_mode == core::field_mode::progressive || progressive_)
 		{
-			return last_frame_ = render_frame(true, true);
+			result = render_frame(true, true);
 		}
 		else
 		{
 			auto field1 = render_frame(true, true);
 			auto field2 = render_frame(true, false);
 
-			if (field1 != core::basic_frame::eof() && field2 == core::basic_frame::eof())
+			if (field1 != core::draw_frame::empty() && field2 == core::draw_frame::empty())
 			{
 				field2 = render_frame(false, true);
 			}
@@ -344,31 +343,35 @@ struct image_scroll_producer : public core::frame_producer
 				advance();
 			}
 
-			last_frame_ = field2;
-
-			return core::basic_frame::interlace(field1, field2, format_desc_.field_mode);
+			result = core::draw_frame::interlace(field1, field2, format_desc_.field_mode);
 		}
-	}
-
-	virtual safe_ptr<core::basic_frame> last_frame() const override
-	{
-		return last_frame_;
-	}
 		
-	virtual std::wstring print() const override
+		event_subject_ << monitor::event("file/path") % filename_
+					   << monitor::event("delta") % delta_ 
+					   << monitor::event("speed") % speed_;
+
+		return result;
+	}
+				
+	std::wstring print() const override
 	{
 		return L"image_scroll_producer[" + filename_ + L"]";
 	}
 
-	virtual boost::property_tree::wptree info() const override
+	std::wstring name() const override
+	{
+		return L"image-scroll";
+	}
+
+	boost::property_tree::wptree info() const override
 	{
 		boost::property_tree::wptree info;
-		info.add(L"type", L"image-scroll-producer");
+		info.add(L"type", L"image-scroll");
 		info.add(L"filename", filename_);
 		return info;
 	}
 
-	virtual uint32_t nb_frames() const override
+	uint32_t nb_frames() const override
 	{
 		if(width_ == format_desc_.width)
 		{
@@ -381,16 +384,26 @@ struct image_scroll_producer : public core::frame_producer
 			return static_cast<uint32_t>(length / std::abs(speed_));// + length % std::abs(delta_));
 		}
 	}
+
+	void subscribe(const monitor::observable::observer_ptr& o) override															
+	{
+		return event_subject_.subscribe(o);
+	}
+
+	void unsubscribe(const monitor::observable::observer_ptr& o) override		
+	{
+		return event_subject_.unsubscribe(o);
+	}
 };
 
-safe_ptr<core::frame_producer> create_scroll_producer(const safe_ptr<core::frame_factory>& frame_factory, const std::vector<std::wstring>& params)
+spl::shared_ptr<core::frame_producer> create_scroll_producer(const spl::shared_ptr<core::frame_factory>& frame_factory, const core::video_format_desc& format_desc, const std::vector<std::wstring>& params)
 {
-	static const std::vector<std::wstring> extensions = list_of(L"png")(L"tga")(L"bmp")(L"jpg")(L"jpeg")(L"gif")(L"tiff")(L"tif")(L"jp2")(L"jpx")(L"j2k")(L"j2c");
+	static const std::vector<std::wstring> extensions = list_of(L".png")(L".tga")(L".bmp")(L".jpg")(L".jpeg")(L".gif")(L".tiff")(L".tif")(L".jp2")(L".jpx")(L".j2k")(L".j2c");
 	std::wstring filename = env::media_folder() + L"\\" + params[0];
 	
 	auto ext = std::find_if(extensions.begin(), extensions.end(), [&](const std::wstring& ex) -> bool
 		{					
-			return boost::filesystem::is_regular_file(boost::filesystem::wpath(filename).replace_extension(ex));
+			return boost::filesystem::is_regular_file(boost::filesystem::path(filename).replace_extension(ex));
 		});
 
 	if(ext == extensions.end())
@@ -428,9 +441,10 @@ safe_ptr<core::frame_producer> create_scroll_producer(const safe_ptr<core::frame
 	bool premultiply_with_alpha = std::find(params.begin(), params.end(), L"PREMULTIPLY") != params.end();
 	bool progressive = std::find(params.begin(), params.end(), L"PROGRESSIVE") != params.end();
 
-	return create_producer_print_proxy(make_safe<image_scroll_producer>(
+	return core::create_destroy_proxy(spl::make_shared<image_scroll_producer>(
 		frame_factory, 
-		filename + L"." + *ext, 
+		format_desc, 
+		filename + *ext, 
 		-speed, 
 		-duration, 
 		motion_blur_px, 

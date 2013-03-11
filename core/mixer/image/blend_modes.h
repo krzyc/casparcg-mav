@@ -21,11 +21,13 @@
 
 #pragma once
 
+#include <common/enum_class.h>
+
 namespace caspar { namespace core {
 		
-struct blend_mode
+struct blend_mode_def
 {
-	enum type 
+	enum type
 	{
 		normal = 0,
 		lighten,
@@ -60,7 +62,8 @@ struct blend_mode
 		blend_mode_count 
 	};
 };
+typedef enum_class<blend_mode_def> blend_mode;
 
-blend_mode::type get_blend_mode(const std::wstring& str);
+blend_mode get_blend_mode(const std::wstring& str);
 
 }}

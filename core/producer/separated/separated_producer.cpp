@@ -23,88 +23,112 @@
 
 #include "separated_producer.h"
 
-#include <core/producer/frame/basic_frame.h>
+#include <core/producer/frame_producer.h>
+#include <core/frame/draw_frame.h>
+#include <core/monitor/monitor.h>
 
 #include <tbb/parallel_invoke.h>
 
 namespace caspar { namespace core {	
 
-struct separated_producer : public frame_producer
+class separated_producer : public frame_producer_base
 {		
-	safe_ptr<frame_producer>	fill_producer_;
-	safe_ptr<frame_producer>	key_producer_;
-	safe_ptr<basic_frame>		fill_;
-	safe_ptr<basic_frame>		key_;
-	safe_ptr<basic_frame>		last_frame_;
-		
-	explicit separated_producer(const safe_ptr<frame_producer>& fill, const safe_ptr<frame_producer>& key) 
-		: fill_producer_(fill)
+	monitor::basic_subject			event_subject_;
+	monitor::basic_subject			key_event_subject_;
+
+	spl::shared_ptr<frame_producer>	fill_producer_;
+	spl::shared_ptr<frame_producer>	key_producer_;
+	draw_frame						fill_;
+	draw_frame						key_;
+			
+public:
+	explicit separated_producer(const spl::shared_ptr<frame_producer>& fill, const spl::shared_ptr<frame_producer>& key) 
+		: key_event_subject_("keyer")		
+		, fill_producer_(fill)
 		, key_producer_(key)
-		, fill_(core::basic_frame::late())
-		, key_(core::basic_frame::late())
-		, last_frame_(core::basic_frame::empty())
+		, fill_(core::draw_frame::late())
+		, key_(core::draw_frame::late())
 	{
+		CASPAR_LOG(info) << print() << L" Initialized";
+
+		key_event_subject_.subscribe(event_subject_);
+
+		key_producer_->subscribe(key_event_subject_);
+		fill_producer_->subscribe(event_subject_);
 	}
 
 	// frame_producer
 	
-	virtual safe_ptr<basic_frame> receive(int hints) override
+	draw_frame receive_impl() override
 	{
 		tbb::parallel_invoke(
 		[&]
 		{
-			if(fill_ == core::basic_frame::late())
-				fill_ = receive_and_follow(fill_producer_, hints);
+			if(fill_ == core::draw_frame::late())
+				fill_ = fill_producer_->receive();
 		},
 		[&]
 		{
-			if(key_ == core::basic_frame::late())
-				key_ = receive_and_follow(key_producer_, hints | ALPHA_HINT);
+			if(key_ == core::draw_frame::late())
+				key_ = key_producer_->receive();
 		});
-
-		if(fill_ == basic_frame::eof() || key_ == basic_frame::eof())
-			return basic_frame::eof();
-
-		if(fill_ == core::basic_frame::late() || key_ == core::basic_frame::late()) // One of the producers is lagging, keep them in sync.
-			return core::basic_frame::late();
 		
-		auto frame = basic_frame::fill_and_key(fill_, key_);
+		if(fill_ == core::draw_frame::late() || key_ == core::draw_frame::late()) // One of the producers is lagging, keep them in sync.
+			return core::draw_frame::late();
+		
+		auto frame = draw_frame::mask(fill_, key_);
 
-		fill_ = basic_frame::late();
-		key_  = basic_frame::late();
-
-		return last_frame_ = frame;
+		fill_ = draw_frame::late();
+		key_  = draw_frame::late();
+		
+		return frame;
 	}
 
-	virtual safe_ptr<core::basic_frame> last_frame() const override
+	draw_frame last_frame()
 	{
-		return disable_audio(last_frame_);
+		return draw_frame::mask(fill_producer_->last_frame(), key_producer_->last_frame());
 	}
-
-	virtual uint32_t nb_frames() const override
+				
+	uint32_t nb_frames() const override
 	{
 		return std::min(fill_producer_->nb_frames(), key_producer_->nb_frames());
 	}
 
-	virtual std::wstring print() const override
+	std::wstring print() const override
 	{
 		return L"separated[fill:" + fill_producer_->print() + L"|key[" + key_producer_->print() + L"]]";
 	}	
 
+	boost::unique_future<std::wstring> call(const std::wstring& str) override
+	{
+		key_producer_->call(str);
+		return fill_producer_->call(str);
+	}
+
+	std::wstring name() const override
+	{
+		return L"separated";
+	}
+
 	boost::property_tree::wptree info() const override
 	{
-		boost::property_tree::wptree info;
-		info.add(L"type", L"separated-producer");
-		info.add_child(L"fill.producer",	fill_producer_->info());
-		info.add_child(L"key.producer",	key_producer_->info());
-		return info;
+		return fill_producer_->info();;
+	}
+
+	void subscribe(const monitor::observable::observer_ptr& o) override															
+	{
+		return event_subject_.subscribe(o);
+	}
+
+	void unsubscribe(const monitor::observable::observer_ptr& o) override		
+	{
+		return event_subject_.unsubscribe(o);
 	}
 };
 
-safe_ptr<frame_producer> create_separated_producer(const safe_ptr<frame_producer>& fill, const safe_ptr<frame_producer>& key)
+spl::shared_ptr<frame_producer> create_separated_producer(const spl::shared_ptr<frame_producer>& fill, const spl::shared_ptr<frame_producer>& key)
 {
-	return create_producer_print_proxy(
-			make_safe<separated_producer>(fill, key));
+	return spl::make_shared<separated_producer>(fill, key);
 }
 
 }}

@@ -21,7 +21,9 @@
 
 #pragma once
 
-#include <boost/property_tree/ptree.hpp>
+#include <common/memory.h>
+
+#include <boost/property_tree/ptree_fwd.hpp>
 
 #include <string>
 #include <vector>
@@ -29,13 +31,13 @@
 namespace caspar { 
 
 namespace core {
-	struct frame_consumer;
+	class frame_consumer;
 }
 
 namespace ffmpeg {
 
 	
-safe_ptr<core::frame_consumer> create_consumer(const std::vector<std::wstring>& params);
-safe_ptr<core::frame_consumer> create_consumer(const boost::property_tree::wptree& ptree);
+spl::shared_ptr<core::frame_consumer> create_consumer(const std::vector<std::wstring>& params);
+spl::shared_ptr<core::frame_consumer> create_consumer(const boost::property_tree::wptree& ptree);
 
 }}

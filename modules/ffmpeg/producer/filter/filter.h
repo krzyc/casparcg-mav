@@ -21,7 +21,7 @@
 
 #pragma once
 
-#include <common/memory/safe_ptr.h>
+#include <common/memory.h>
 
 #include <boost/noncopyable.hpp>
 #include <boost/algorithm/string/case_conv.hpp>
@@ -48,7 +48,7 @@ public:
 
 	void push(const std::shared_ptr<AVFrame>& frame);
 	std::shared_ptr<AVFrame> poll();
-	std::vector<safe_ptr<AVFrame>> poll_all();
+	std::vector<spl::shared_ptr<AVFrame>> poll_all();
 
 	std::wstring filter_str() const;
 			
@@ -72,7 +72,7 @@ public:
 	
 	static int delay(const std::wstring& filters)
 	{
-		return is_double_rate(filters) ? 1 : 1;
+		return is_double_rate(filters) ? 1 : 0;
 	}
 
 	int delay() const
@@ -90,8 +90,8 @@ public:
 		return is_deinterlacing(filter_str());
 	}
 private:
-	struct implementation;
-	safe_ptr<implementation> impl_;
+	struct impl;
+	spl::shared_ptr<impl> impl_;
 };
 
 }}

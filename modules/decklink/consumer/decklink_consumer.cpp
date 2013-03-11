@@ -27,21 +27,24 @@
 
 #include "../interop/DeckLinkAPI_h.h"
 
-#include <core/mixer/read_frame.h>
+#include <core/frame/frame.h>
+#include <core/mixer/audio/audio_mixer.h>
 
-#include <common/concurrency/com_context.h>
-#include <common/concurrency/future_util.h>
+#include <common/executor.h>
+#include <common/lock.h>
 #include <common/diagnostics/graph.h>
-#include <common/exception/exceptions.h>
-#include <common/memory/memcpy.h>
-#include <common/memory/memclr.h>
-#include <common/memory/memshfl.h>
+#include <common/except.h>
+#include <common/memshfl.h>
+#include <common/array.h>
+#include <common/future.h>
 
 #include <core/consumer/frame_consumer.h>
 
 #include <tbb/concurrent_queue.h>
 #include <tbb/cache_aligned_allocator.h>
 
+#include <common/assert.h>
+#include <boost/lexical_cast.hpp>
 #include <boost/circular_buffer.hpp>
 #include <boost/timer.hpp>
 #include <boost/property_tree/ptree.hpp>
@@ -64,16 +67,16 @@ struct configuration
 		default_latency
 	};
 
-	size_t		device_index;
+	int			device_index;
 	bool		embedded_audio;
 	keyer_t		keyer;
 	latency_t	latency;
 	bool		key_only;
-	size_t		base_buffer_depth;
+	int			base_buffer_depth;
 	
 	configuration()
 		: device_index(1)
-		, embedded_audio(false)
+		, embedded_audio(true)
 		, keyer(default_keyer)
 		, latency(default_latency)
 		, key_only(false)
@@ -81,7 +84,7 @@ struct configuration
 	{
 	}
 	
-	size_t buffer_depth() const
+	int buffer_depth() const
 	{
 		return base_buffer_depth + (latency == low_latency ? 0 : 1) + (embedded_audio ? 1 : 0);
 	}
@@ -90,13 +93,13 @@ struct configuration
 class decklink_frame : public IDeckLinkVideoFrame
 {
 	tbb::atomic<int>											ref_count_;
-	std::shared_ptr<core::read_frame>							frame_;
+	core::const_frame											frame_;
 	const core::video_format_desc								format_desc_;
 
 	const bool													key_only_;
 	std::vector<uint8_t, tbb::cache_aligned_allocator<uint8_t>> data_;
 public:
-	decklink_frame(const safe_ptr<core::read_frame>& frame, const core::video_format_desc& format_desc, bool key_only)
+	decklink_frame(core::const_frame frame, const core::video_format_desc& format_desc, bool key_only)
 		: frame_(frame)
 		, format_desc_(format_desc)
 		, key_only_(key_only)
@@ -125,9 +128,9 @@ public:
 
 	// IDecklinkVideoFrame
 
-	STDMETHOD_(long,			GetWidth())			{return format_desc_.width;}        
-    STDMETHOD_(long,			GetHeight())		{return format_desc_.height;}        
-    STDMETHOD_(long,			GetRowBytes())		{return format_desc_.width*4;}        
+	STDMETHOD_(long,			GetWidth())			{return static_cast<long>(format_desc_.width);}        
+    STDMETHOD_(long,			GetHeight())		{return static_cast<long>(format_desc_.height);}        
+    STDMETHOD_(long,			GetRowBytes())		{return static_cast<long>(format_desc_.width*4);}        
 	STDMETHOD_(BMDPixelFormat,	GetPixelFormat())	{return bmdFormat8BitBGRA;}        
     STDMETHOD_(BMDFrameFlags,	GetFlags())			{return bmdFrameFlagDefault;}
         
@@ -135,7 +138,7 @@ public:
 	{
 		try
 		{
-			if(static_cast<size_t>(frame_->image_data().size()) != format_desc_.size)
+			if(static_cast<int>(frame_.image_data().size()) != format_desc_.size)
 			{
 				data_.resize(format_desc_.size, 0);
 				*buffer = data_.data();
@@ -144,13 +147,13 @@ public:
 			{
 				if(data_.empty())
 				{
-					data_.resize(frame_->image_data().size());
-					fast_memshfl(data_.data(), frame_->image_data().begin(), frame_->image_data().size(), 0x0F0F0F0F, 0x0B0B0B0B, 0x07070707, 0x03030303);
+					data_.resize(frame_.image_data().size());
+					aligned_memshfl(data_.data(), frame_.image_data().begin(), frame_.image_data().size(), 0x0F0F0F0F, 0x0B0B0B0B, 0x07070707, 0x03030303);
 				}
 				*buffer = data_.data();
 			}
 			else
-				*buffer = const_cast<uint8_t*>(frame_->image_data().begin());
+				*buffer = const_cast<uint8_t*>(frame_.image_data().begin());
 		}
 		catch(...)
 		{
@@ -166,9 +169,9 @@ public:
 
 	// decklink_frame	
 
-	const boost::iterator_range<const int32_t*> audio_data()
+	const core::audio_buffer& audio_data()
 	{
-		return frame_->audio_data();
+		return frame_.audio_data();
 	}
 };
 
@@ -190,21 +193,20 @@ struct decklink_consumer : public IDeckLinkVideoOutputCallback, public IDeckLink
 		
 	const std::wstring					model_name_;
 	const core::video_format_desc		format_desc_;
-	const size_t						buffer_size_;
+	const int							buffer_size_;
 
 	long long							video_scheduled_;
 	long long							audio_scheduled_;
 
-	size_t								preroll_count_;
+	int									preroll_count_;
 		
 	boost::circular_buffer<std::vector<int32_t>>	audio_container_;
 
-	tbb::concurrent_bounded_queue<std::shared_ptr<core::read_frame>> video_frame_buffer_;
-	tbb::concurrent_bounded_queue<std::shared_ptr<core::read_frame>> audio_frame_buffer_;
+	tbb::concurrent_bounded_queue<core::const_frame> video_frame_buffer_;
+	tbb::concurrent_bounded_queue<core::const_frame> audio_frame_buffer_;
 	
-	safe_ptr<diagnostics::graph> graph_;
+	spl::shared_ptr<diagnostics::graph> graph_;
 	boost::timer tick_timer_;
-	BMDReferenceStatus last_reference_status_;
 	retry_task<bool> send_completion_;
 
 public:
@@ -223,7 +225,6 @@ public:
 		, audio_scheduled_(0)
 		, preroll_count_(0)
 		, audio_container_(buffer_size_+1)
-		, last_reference_status_(static_cast<BMDReferenceStatus>(-1))
 	{
 		is_running_ = true;
 				
@@ -243,15 +244,15 @@ public:
 				
 		if(config.embedded_audio)
 			enable_audio();
-
+		
 		set_latency(config.latency);				
 		set_keyer(config.keyer);
 				
 		if(config.embedded_audio)		
 			output_->BeginAudioPreroll();		
 		
-		for(size_t n = 0; n < buffer_size_; ++n)
-			schedule_next_video(make_safe<core::read_frame>());
+		for(int n = 0; n < buffer_size_; ++n)
+			schedule_next_video(core::const_frame::empty());
 
 		if(!config.embedded_audio)
 			start_playback();
@@ -260,8 +261,8 @@ public:
 	~decklink_consumer()
 	{		
 		is_running_ = false;
-		video_frame_buffer_.try_push(std::make_shared<core::read_frame>());
-		audio_frame_buffer_.try_push(std::make_shared<core::read_frame>());
+		video_frame_buffer_.try_push(core::const_frame::empty());
+		audio_frame_buffer_.try_push(core::const_frame::empty());
 
 		if(output_ != nullptr) 
 		{
@@ -317,10 +318,10 @@ public:
 	void enable_audio()
 	{
 		if(FAILED(output_->EnableAudioOutput(bmdAudioSampleRate48kHz, bmdAudioSampleType32bitInteger, 2, bmdAudioOutputStreamTimestamped)))
-				BOOST_THROW_EXCEPTION(caspar_exception() << msg_info(narrow(print()) + " Could not enable audio output."));
+				CASPAR_THROW_EXCEPTION(caspar_exception() << msg_info(u8(print()) + " Could not enable audio output."));
 				
 		if(FAILED(output_->SetAudioCallback(this)))
-			BOOST_THROW_EXCEPTION(caspar_exception() << msg_info(narrow(print()) + " Could not set audio callback."));
+			CASPAR_THROW_EXCEPTION(caspar_exception() << msg_info(u8(print()) + " Could not set audio callback."));
 
 		CASPAR_LOG(info) << print() << L" Enabled embedded-audio.";
 	}
@@ -328,18 +329,18 @@ public:
 	void enable_video(BMDDisplayMode display_mode)
 	{
 		if(FAILED(output_->EnableVideoOutput(display_mode, bmdVideoOutputFlagDefault))) 
-			BOOST_THROW_EXCEPTION(caspar_exception() << msg_info(narrow(print()) + " Could not enable video output."));
+			CASPAR_THROW_EXCEPTION(caspar_exception() << msg_info(u8(print()) + " Could not enable video output."));
 		
 		if(FAILED(output_->SetScheduledFrameCompletionCallback(this)))
-			BOOST_THROW_EXCEPTION(caspar_exception() 
-									<< msg_info(narrow(print()) + " Failed to set playback completion callback.")
+			CASPAR_THROW_EXCEPTION(caspar_exception() 
+									<< msg_info(u8(print()) + " Failed to set playback completion callback.")
 									<< boost::errinfo_api_function("SetScheduledFrameCompletionCallback"));
 	}
 
 	void start_playback()
 	{
 		if(FAILED(output_->StartScheduledPlayback(0, format_desc_.time_scale, 1.0))) 
-			BOOST_THROW_EXCEPTION(caspar_exception() << msg_info(narrow(print()) + " Failed to schedule playback."));
+			CASPAR_THROW_EXCEPTION(caspar_exception() << msg_info(u8(print()) + " Failed to schedule playback."));
 	}
 	
 	STDMETHOD (QueryInterface(REFIID, LPVOID*))	{return E_NOINTERFACE;}
@@ -374,10 +375,10 @@ public:
 			else if(result == bmdOutputFrameFlushed)
 				graph_->set_tag("flushed-frame");
 
-			std::shared_ptr<core::read_frame> frame;	
+			auto frame = core::const_frame::empty();	
 			video_frame_buffer_.pop(frame);
 			send_completion_.try_completion();
-			schedule_next_video(make_safe_ptr(frame));	
+			schedule_next_video(frame);	
 			
 			unsigned long buffered;
 			output_->GetBufferedVideoFrameCount(&buffered);
@@ -385,8 +386,10 @@ public:
 		}
 		catch(...)
 		{
-			tbb::spin_mutex::scoped_lock lock(exception_mutex_);
-			exception_ = std::current_exception();
+			lock(exception_mutex_, [&]
+			{
+				exception_ = std::current_exception();
+			});
 			return E_FAIL;
 		}
 
@@ -412,10 +415,10 @@ public:
 			}
 			else
 			{
-				std::shared_ptr<core::read_frame> frame;
+				auto frame = core::const_frame::empty();
 				audio_frame_buffer_.pop(frame);
 				send_completion_.try_completion();
-				schedule_next_audio(frame->audio_data());
+				schedule_next_audio(frame.audio_data());
 			}
 
 			unsigned long buffered;
@@ -435,7 +438,7 @@ public:
 	template<typename T>
 	void schedule_next_audio(const T& audio_data)
 	{
-		const int sample_frame_count = audio_data.size()/format_desc_.audio_channels;
+		auto sample_frame_count = static_cast<int>(audio_data.size()/format_desc_.audio_channels);
 
 		audio_container_.push_back(std::vector<int32_t>(audio_data.begin(), audio_data.end()));
 
@@ -445,7 +448,7 @@ public:
 		audio_scheduled_ += sample_frame_count;
 	}
 			
-	void schedule_next_video(const safe_ptr<core::read_frame>& frame)
+	void schedule_next_video(core::const_frame frame)
 	{
 		CComPtr<IDeckLinkVideoFrame> frame2(new decklink_frame(frame, format_desc_, config_.key_only));
 		if(FAILED(output_->ScheduleVideoFrame(frame2, video_scheduled_, format_desc_.duration, format_desc_.time_scale)))
@@ -455,44 +458,21 @@ public:
 
 		graph_->set_value("tick-time", tick_timer_.elapsed()*format_desc_.fps*0.5);
 		tick_timer_.restart();
-
-		detect_reference_signal_change();
 	}
 
-	void detect_reference_signal_change()
+	boost::unique_future<bool> send(core::const_frame frame)
 	{
-		BMDReferenceStatus reference_status;
-
-		if (output_->GetReferenceStatus(&reference_status) != S_OK)
+		auto exception = lock(exception_mutex_, [&]
 		{
-			CASPAR_LOG(error) << print() << L" Reference signal: failed while querying status";
-		}
-		else if (reference_status != last_reference_status_)
-		{
-			last_reference_status_ = reference_status;
+			return exception_;
+		});
 
-			if (reference_status == 0)
-				CASPAR_LOG(info) << print() << L" Reference signal: not detected.";
-			else if (reference_status & bmdReferenceNotSupportedByHardware)
-				CASPAR_LOG(info) << print() << L" Reference signal: not supported by hardware.";
-			else if (reference_status & bmdReferenceLocked)
-				CASPAR_LOG(info) << print() << L" Reference signal: locked.";
-			else
-				CASPAR_LOG(info) << print() << L" Reference signal: Unhandled enum bitfield: " << reference_status;
-		}
-	}
-
-	boost::unique_future<bool> send(const safe_ptr<core::read_frame>& frame)
-	{
-		{
-			tbb::spin_mutex::scoped_lock lock(exception_mutex_);
-			if(exception_ != nullptr)
-				std::rethrow_exception(exception_);
-		}
+		if(exception != nullptr)
+			std::rethrow_exception(exception);		
 
 		if(!is_running_)
-			BOOST_THROW_EXCEPTION(caspar_exception() << msg_info(narrow(print()) + " Is not running."));
-
+			CASPAR_THROW_EXCEPTION(caspar_exception() << msg_info(u8(print()) + " Is not running."));
+		
 		bool audio_ready = !config_.embedded_audio;
 		bool video_ready = false;
 
@@ -527,54 +507,59 @@ public:
 
 struct decklink_consumer_proxy : public core::frame_consumer
 {
-	const configuration				config_;
-	com_context<decklink_consumer>	context_;
-	std::vector<size_t>				audio_cadence_;
+	const configuration					config_;
+	std::unique_ptr<decklink_consumer>	consumer_;
+	executor							executor_;
 public:
 
 	decklink_consumer_proxy(const configuration& config)
 		: config_(config)
-		, context_(L"decklink_consumer[" + boost::lexical_cast<std::wstring>(config.device_index) + L"]")
+		, executor_(L"decklink_consumer[" + boost::lexical_cast<std::wstring>(config.device_index) + L"]")
 	{
+		executor_.begin_invoke([=]
+		{
+			::CoInitialize(nullptr);
+		});
 	}
 
 	~decklink_consumer_proxy()
 	{
-		if(context_)
+		executor_.invoke([=]
 		{
-			auto str = print();
-			context_.reset();
-			CASPAR_LOG(info) << str << L" Successfully Uninitialized.";	
-		}
+			::CoUninitialize();
+		});
 	}
 
 	// frame_consumer
 	
-	virtual void initialize(const core::video_format_desc& format_desc, int channel_index) override
+	void initialize(const core::video_format_desc& format_desc, int channel_index) override
 	{
-		context_.reset([&]{return new decklink_consumer(config_, format_desc, channel_index);});		
-		audio_cadence_ = format_desc.audio_cadence;		
-
-		CASPAR_LOG(info) << print() << L" Successfully Initialized.";	
+		executor_.invoke([=]
+		{
+			consumer_.reset();
+			consumer_.reset(new decklink_consumer(config_, format_desc, channel_index));			
+		});
 	}
 	
-	virtual boost::unique_future<bool> send(const safe_ptr<core::read_frame>& frame) override
+	boost::unique_future<bool> send(core::const_frame frame) override
 	{
-		CASPAR_VERIFY(audio_cadence_.front() == static_cast<size_t>(frame->audio_data().size()));
-		boost::range::rotate(audio_cadence_, std::begin(audio_cadence_)+1);
-
-		return context_->send(frame);
+		return consumer_->send(frame);
 	}
 	
-	virtual std::wstring print() const override
+	std::wstring print() const override
 	{
-		return context_ ? context_->print() : L"[decklink_consumer]";
+		return consumer_ ? consumer_->print() : L"[decklink_consumer]";
 	}		
 
-	virtual boost::property_tree::wptree info() const override
+	std::wstring name() const override
+	{
+		return L"decklink";
+	}
+
+	boost::property_tree::wptree info() const override
 	{
 		boost::property_tree::wptree info;
-		info.add(L"type", L"decklink-consumer");
+		info.add(L"type", L"decklink");
 		info.add(L"key-only", config_.key_only);
 		info.add(L"device", config_.device_index);
 		info.add(L"low-latency", config_.low_latency);
@@ -584,18 +569,26 @@ public:
 		return info;
 	}
 
-	virtual size_t buffer_depth() const override
+	int buffer_depth() const override
 	{
 		return config_.buffer_depth();
 	}
 
-	virtual int index() const override
+	int index() const override
 	{
 		return 300 + config_.device_index;
 	}
+
+	void subscribe(const monitor::observable::observer_ptr& o) override
+	{
+	}
+
+	void unsubscribe(const monitor::observable::observer_ptr& o) override
+	{
+	}	
 };	
 
-safe_ptr<core::frame_consumer> create_consumer(const std::vector<std::wstring>& params) 
+spl::shared_ptr<core::frame_consumer> create_consumer(const std::vector<std::wstring>& params) 
 {
 	if(params.size() < 1 || params[0] != L"DECKLINK")
 		return core::frame_consumer::empty();
@@ -603,7 +596,7 @@ safe_ptr<core::frame_consumer> create_consumer(const std::vector<std::wstring>& 
 	configuration config;
 		
 	if(params.size() > 1)
-		config.device_index = lexical_cast_or_default<int>(params[1], config.device_index);
+		config.device_index = boost::lexical_cast<int>(params[1]);
 	
 	if(std::find(params.begin(), params.end(), L"INTERNAL_KEY")			!= params.end())
 		config.keyer = configuration::internal_keyer;
@@ -618,14 +611,14 @@ safe_ptr<core::frame_consumer> create_consumer(const std::vector<std::wstring>& 
 	config.embedded_audio	= std::find(params.begin(), params.end(), L"EMBEDDED_AUDIO") != params.end();
 	config.key_only			= std::find(params.begin(), params.end(), L"KEY_ONLY")		 != params.end();
 
-	return make_safe<decklink_consumer_proxy>(config);
+	return spl::make_shared<decklink_consumer_proxy>(config);
 }
 
-safe_ptr<core::frame_consumer> create_consumer(const boost::property_tree::wptree& ptree) 
+spl::shared_ptr<core::frame_consumer> create_consumer(const boost::property_tree::wptree& ptree) 
 {
 	configuration config;
 
-	auto keyer = ptree.get(L"keyer", L"external");
+	auto keyer = ptree.get(L"keyer", L"default");
 	if(keyer == L"external")
 		config.keyer = configuration::external_keyer;
 	else if(keyer == L"internal")
@@ -642,7 +635,7 @@ safe_ptr<core::frame_consumer> create_consumer(const boost::property_tree::wptre
 	config.embedded_audio		= ptree.get(L"embedded-audio",	config.embedded_audio);
 	config.base_buffer_depth	= ptree.get(L"buffer-depth",	config.base_buffer_depth);
 
-	return make_safe<decklink_consumer_proxy>(config);
+	return spl::make_shared<decklink_consumer_proxy>(config);
 }
 
 }}

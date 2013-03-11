@@ -25,7 +25,7 @@
 #include <string>
 #include <iostream>
 
-#include <common/log/log.h>
+#include <common/log.h>
 
 namespace caspar { namespace IO {
 

@@ -25,7 +25,7 @@
 #include <string>
 #include <map>
 
-#include <common/memory/safe_ptr.h>
+#include <common/memory.h>
 
 #include <boost/function.hpp>
 

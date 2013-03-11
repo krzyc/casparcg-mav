@@ -21,64 +21,52 @@
 
 #include "image_consumer.h"
 
-#include <common/exception/exceptions.h>
+#include <common/except.h>
 #include <common/env.h>
-#include <common/log/log.h>
-#include <common/utility/string.h>
-#include <common/concurrency/future_util.h>
+#include <common/log.h>
+#include <common/utf.h>
+#include <common/array.h>
+#include <common/future.h>
 
 #include <core/consumer/frame_consumer.h>
 #include <core/video_format.h>
-#include <core/mixer/read_frame.h>
+#include <core/frame/frame.h>
 
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include <boost/thread.hpp>
 
 #include <tbb/concurrent_queue.h>
 
+#include <asmlib.h>
+
 #include <FreeImage.h>
+
 #include <vector>
 
 namespace caspar { namespace image {
 	
 struct image_consumer : public core::frame_consumer
 {
-	core::video_format_desc	format_desc_;
-	std::wstring			filename_;
 public:
 
 	// frame_consumer
 
-	image_consumer(const std::wstring& filename)
-		: filename_(filename)
+	void initialize(const core::video_format_desc&, int) override
 	{
-	}
-
-	virtual void initialize(const core::video_format_desc& format_desc, int) override
-	{
-		format_desc_ = format_desc;
 	}
 	
-	virtual boost::unique_future<bool> send(const safe_ptr<core::read_frame>& frame) override
+	boost::unique_future<bool> send(core::const_frame frame) override
 	{				
-		auto format_desc = format_desc_;
-		auto filename = filename_;
-
-		boost::thread async([format_desc, frame, filename]
+		boost::thread async([frame]
 		{
 			try
 			{
-				std::string filename2 = narrow(filename);
+				auto filename = u8(env::data_folder()) +  boost::posix_time::to_iso_string(boost::posix_time::second_clock::local_time()) + ".png";
 
-				if (filename2.empty())
-					filename2 = narrow(env::media_folder()) +  boost::posix_time::to_iso_string(boost::posix_time::second_clock::local_time()) + ".png";
-				else
-					filename2 = narrow(env::media_folder()) + filename2 + ".png";
-
-				auto bitmap = std::shared_ptr<FIBITMAP>(FreeImage_Allocate(format_desc.width, format_desc.height, 32), FreeImage_Unload);
-				memcpy(FreeImage_GetBits(bitmap.get()), frame->image_data().begin(), frame->image_size());
+				auto bitmap = std::shared_ptr<FIBITMAP>(FreeImage_Allocate(static_cast<int>(frame.width()), static_cast<int>(frame.height()), 32), FreeImage_Unload);
+				A_memcpy(FreeImage_GetBits(bitmap.get()), frame.image_data().begin(), frame.image_data().size());
 				FreeImage_FlipVertical(bitmap.get());
-				FreeImage_Save(FIF_PNG, bitmap.get(), filename2.c_str(), 0);
+				FreeImage_Save(FIF_PNG, bitmap.get(), filename.c_str(), 0);
 			}
 			catch(...)
 			{
@@ -90,40 +78,48 @@ public:
 		return wrap_as_future(false);
 	}
 
-	virtual std::wstring print() const override
+	std::wstring print() const override
 	{
 		return L"image[]";
 	}
+	
+	std::wstring name() const override
+	{
+		return L"image";
+	}
 
-	virtual boost::property_tree::wptree info() const override
+	boost::property_tree::wptree info() const override
 	{
 		boost::property_tree::wptree info;
-		info.add(L"type", L"image-consumer");
+		info.add(L"type", L"image");
 		return info;
 	}
 
-	virtual size_t buffer_depth() const override
+	int buffer_depth() const override
 	{
 		return 0;
 	}
 
-	virtual int index() const override
+	int index() const override
 	{
 		return 100;
 	}
+
+	void subscribe(const monitor::observable::observer_ptr& o) override
+	{
+	}
+
+	void unsubscribe(const monitor::observable::observer_ptr& o) override
+	{
+	}	
 };
 
-safe_ptr<core::frame_consumer> create_consumer(const std::vector<std::wstring>& params)
+spl::shared_ptr<core::frame_consumer> create_consumer(const std::vector<std::wstring>& params)
 {
 	if(params.size() < 1 || params[0] != L"IMAGE")
 		return core::frame_consumer::empty();
 
-	std::wstring filename;
-
-	if (params.size() > 1)
-		filename = params[1];
-
-	return make_safe<image_consumer>(filename);
+	return spl::make_shared<image_consumer>();
 }
 
 }}

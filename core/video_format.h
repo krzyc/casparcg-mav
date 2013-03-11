@@ -21,19 +21,22 @@
 
 #pragma once
 
+#include <common/enum_class.h>
+
 #include <vector>
 #include <string>
+#include <cstddef>
 
 namespace caspar { namespace core {
 	
-struct video_format 
+struct video_format_def 
 { 
-	enum type
+	enum type 
 	{
-		pal = 0,
-		ntsc,
-		x576p2500,
-		x720p2500,
+		pal,		
+		ntsc,		
+		x576p2500,	
+		x720p2500,	
 		x720p5000,
 		x720p2398,
 		x720p2400,
@@ -42,13 +45,13 @@ struct video_format
 		x720p3000,
 		x720p6000,
 		x1080p2398,
-		x1080p2400,
-		x1080i5000,
-		x1080i5994,
-		x1080i6000,
-		x1080p2500,
-		x1080p2997,
-		x1080p3000,
+		x1080p2400,	
+		x1080i5000,	
+		x1080i5994,	
+		x1080i6000,	
+		x1080p2500,	
+		x1080p2997,	
+		x1080p3000,	
 		x1080p5000,
 		x1080p5994,
 		x1080p6000,
@@ -56,71 +59,59 @@ struct video_format
 		count
 	};
 };
+typedef enum_class<video_format_def> video_format;
 
-struct field_mode 
-{ 
-	enum type
+struct field_mode_def
+{
+	enum type 
 	{
 		empty		= 0,
 		lower		= 1,
 		upper		= 2,
-		progressive = 3 // NOTE: progressive == lower | upper;
+		progressive = 3, // NOTE: progressive == lower | upper;
 	};
+	static_assert((lower | upper) == progressive, "");
+};
+typedef enum_class<field_mode_def> field_mode;
 
-	static std::wstring print(field_mode::type value)
-	{
-		switch(value)
-		{
-			case progressive:
-				return L"progressive"; 
-			case lower:
-				return L"lower";
-			case upper:
-				return L"upper";
-			default:
-				return L"invalid";
-		}
-	}
+struct video_format_desc sealed
+{
+	video_format		format;		
+
+	int					width;		
+	int					height;		
+	int					square_width;
+	int					square_height;
+	field_mode			field_mode;	// progressive, interlaced upper field first, interlaced lower field first
+	double				fps;		// actual framerate = duration/time_scale, e.g. i50 = 25 fps, p50 = 50 fps
+	int					time_scale;
+	int					duration;
+	int					field_count;
+	std::size_t			size;		// frame size in bytes 
+	std::wstring		name;		// name of output format
+
+	int					audio_sample_rate;
+	int					audio_channels;
+	std::vector<int>	audio_cadence;
+
+	video_format_desc(video_format format,
+					  int width,
+					  int height,
+					  int square_width,
+					  int square_height,
+					  core::field_mode field_mode,
+					  int time_scale,
+					  int duration,
+					  const std::wstring& name,
+					  const std::vector<int>& audio_cadence);
+		
+	video_format_desc(video_format format = video_format::invalid);
+	video_format_desc(const std::wstring& name);
 };
 
-struct video_format_desc
-{
-	video_format::type		format;		// video output format
+bool operator==(const video_format_desc& rhs, const video_format_desc& lhs);
+bool operator!=(const video_format_desc& rhs, const video_format_desc& lhs);
 
-	size_t					width;		// output frame width
-	size_t					height;		// output frame height
-	size_t					square_width;
-	size_t					square_height;
-	field_mode::type		field_mode;	// progressive, interlaced upper field first, interlaced lower field first
-	double					fps;		// actual framerate, e.g. i50 = 25 fps, p50 = 50 fps
-	size_t					time_scale;
-	size_t					duration;
-	size_t					field_count;
-	size_t					size;		// output frame size in bytes 
-	std::wstring			name;		// name of output format
-
-	size_t					audio_sample_rate;
-	size_t					audio_channels;
-	std::vector<size_t>		audio_cadence;
-
-	static const video_format_desc& get(video_format::type format);
-	static const video_format_desc& get(const std::wstring& name);
-	
-	bool operator==(const video_format_desc& lhs)
-	{
-		return format == lhs.format;
-	}
-
-	bool operator!=(const video_format_desc& lhs)
-	{
-		return !(*this == lhs);
-	}
-};
-
-inline std::wostream& operator<<(std::wostream& out, const video_format_desc& format_desc)
-{
-	out << format_desc.name.c_str();
-	return out;
-}
+std::wostream& operator<<(std::wostream& out, const video_format_desc& format_desc);
 
 }}

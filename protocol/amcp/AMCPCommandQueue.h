@@ -21,11 +21,9 @@
 
 #pragma once
 
-#include "../util/thread.h"
-
 #include "AMCPCommand.h"
 
-#include <common/concurrency/executor.h>
+#include <common/executor.h>
 
 #include <tbb\mutex.h>
 

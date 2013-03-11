@@ -24,7 +24,7 @@
 #include "consumer/ffmpeg_consumer.h"
 #include "producer/ffmpeg_producer.h"
 
-#include <common/log/log.h>
+#include <common/log.h>
 
 #include <core/consumer/frame_consumer.h>
 #include <core/producer/frame_producer.h>
@@ -136,7 +136,7 @@ void log_callback(void* ptr, int level, const char* fmt, va_list vl)
     strcpy(prev, line);
     sanitize((uint8_t*)line);
 
-	int len = strlen(line);
+	auto len = strlen(line);
 	if(len > 0)
 		line[len-1] = 0;
 	
@@ -204,7 +204,6 @@ void init()
 	//fix_yadif_filter_format_query();
 	av_register_all();
     avformat_network_init();
-	avcodec_init();
     avcodec_register_all();
 	
 	core::register_consumer_factory([](const std::vector<std::wstring>& params){return create_consumer(params);});
@@ -225,29 +224,29 @@ std::wstring make_version(unsigned int ver)
 	return str.str();
 }
 
-std::wstring get_avcodec_version()
+std::wstring avcodec_version()
 {
-	return make_version(avcodec_version());
+	return make_version(::avcodec_version());
 }
 
-std::wstring get_avformat_version()
+std::wstring avformat_version()
 {
-	return make_version(avformat_version());
+	return make_version(::avformat_version());
 }
 
-std::wstring get_avutil_version()
+std::wstring avutil_version()
 {
-	return make_version(avutil_version());
+	return make_version(::avutil_version());
 }
 
-std::wstring get_avfilter_version()
+std::wstring avfilter_version()
 {
-	return make_version(avfilter_version());
+	return make_version(::avfilter_version());
 }
 
-std::wstring get_swscale_version()
+std::wstring swscale_version()
 {
-	return make_version(swscale_version());
+	return make_version(::swscale_version());
 }
 
 }}

@@ -1,24 +1,23 @@
-CasparCG 2.0.3 Stable (w.r.t 2.0.3 Alpha)
-=========================================
-
-Stage
------
-
-  o Fixed dead-lock that can occur with multiple mixer tweens.
-
-AMCP
-----
-
-  o DATA STORE now supports creating folders of path specified if they does not
-    exist.
-  o DATA REMOVE command was added.
-
-CasparCG 2.0.3 Alpha (w.r.t 2.0 Stable)
-=======================================
+CasparCG 2.1.0 (w.r.t 2.0 Stable)
+=================================
 
 General
 -------
 
+  o 64 bit!
+  o Major code refactoring:
+    + Mixer abstraction so different implementations can be created. Currently
+      CPU mixer and GPU mixer (previously the usage of the GPU was ) exists.
+    + Flattened folder structure for easier inclusion of header files.
+    + Old Windows specific AsyncEventServer class has been replaced by platform
+      independent implementation based on Boost.Asio.
+    + Pimpl classes are now stack allocated with internal shared_ptr to
+      implementation, instead of both handle and body being dynamically
+      allocated. This means that objects are now often passed by value instead
+      of via safe_ptr/shared_ptr, because they are internally reference counted.
+    + Protocol strategies are now easier to implement correctly, because of
+      separation of state between different client connections.
+    + Much more...
   o Data files are now stored in UTF-8 with BOM. Latin1 files are still
     supported for backwards compatibility
   o Commands written in UTF-8 to log file but only ascii characters to console.
@@ -29,6 +28,18 @@ General
     + 1080p6000
     + 720p30 (not supported by decklink)
     + 720p29.976 (not supported by decklink)
+
+OSC
+---
+
+  o Technical information about the current state of the server is published via
+    the OSC protocol via different subjects.
+  o Examples of information published:
+    + Different performance metrics.
+    + Producer names
+    + Producer specific information
+    + Consumer names.
+    + Consumer specific information.
 
 CLK
 ---
@@ -44,14 +55,15 @@ Consumers
   o Consumers on same channel now invoked asynchronously to allow for proper
     sync of multiple consumers.
   o System audio consumer:
-    + no longer provides sync to caspar.
+    + No longer provides sync to caspar.
+    + Pushes data to openal instead of being callbacked by SFML when data is
+      needed.
   o Screen consumer:
     + Support for multiple screen consumers on the same channel
     + No longer spin-waits for vsync
     + Now deinterlaces to two separate frames so for example 50i will no longer
       be converted to 25p but instead to 50p for smooth playback of interlaced
       content.
-  o Decklink consumer now logs whether a reference signal is detected or not.
 
 Producers
 ---------

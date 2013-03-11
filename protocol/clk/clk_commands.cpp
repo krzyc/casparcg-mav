@@ -26,9 +26,9 @@
 
 #include <boost/lexical_cast.hpp>
 
-#include <common/log/log.h>
+#include <common/log.h>
 
-#include <modules/flash/producer/cg_producer.h>
+#include <modules/flash/producer/cg_proxy.h>
 
 #include "clk_commands.h"
 
@@ -37,9 +37,9 @@ namespace caspar { namespace protocol { namespace CLK {
 class command_context
 {
 	bool clock_loaded_;
-	safe_ptr<core::video_channel> channel_;
+	spl::shared_ptr<core::video_channel> channel_;
 public:
-	command_context(const safe_ptr<core::video_channel>& channel)
+	command_context(const spl::shared_ptr<core::video_channel>& channel)
 		: clock_loaded_(false)
 		, channel_(channel)
 	{
@@ -49,13 +49,13 @@ public:
 	{
 		if (!clock_loaded_) 
 		{
-			flash::get_default_cg_producer(channel_)->add(
+			flash::create_cg_proxy(channel_).add(
 				0, L"hawrysklocka/clock.ft", true, L"", data);
 			clock_loaded_ = true;
 		}
 		else
 		{
-			flash::get_default_cg_producer(channel_)->update(0, data);
+			flash::create_cg_proxy(channel_).update(0, data);
 		}
 				
 		CASPAR_LOG(debug) << L"CLK: Clockdata sent: " << data;
@@ -63,7 +63,7 @@ public:
 
 	void reset()
 	{
-		channel_->stage()->clear(flash::cg_producer::DEFAULT_LAYER);
+		channel_->stage().clear(flash::cg_proxy::DEFAULT_LAYER);
 		clock_loaded_ = false;
 		CASPAR_LOG(info) << L"CLK: Recieved and executed reset-command";
 	}
@@ -136,7 +136,7 @@ clk_command_handler create_send_xml_handler(
 	const std::wstring& command_name, 
 	bool expect_clock, 
 	bool expect_time, 
-	const safe_ptr<command_context>& context)
+	const spl::shared_ptr<command_context>& context)
 {
 	return [=] (const std::vector<std::wstring>& params)
 	{
@@ -147,9 +147,9 @@ clk_command_handler create_send_xml_handler(
 
 void add_command_handlers(
 	clk_command_processor& processor, 
-	const safe_ptr<core::video_channel>& channel)
+	const spl::shared_ptr<core::video_channel>& channel)
 {
-	auto context = make_safe<command_context>(channel);
+	auto context = spl::make_shared<command_context>(channel);
 
 	processor
 		.add_handler(L"DUR", 

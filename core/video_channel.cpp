@@ -25,13 +25,21 @@
 
 #include "video_format.h"
 
-#include "consumer/output.h"
-#include "mixer/mixer.h"
-#include "mixer/gpu/ogl_device.h"
 #include "producer/stage.h"
+#include "mixer/mixer.h"
+#include "consumer/output.h"
+#include "frame/frame.h"
+#include "frame/draw_frame.h"
+#include "frame/frame_factory.h"
 
 #include <common/diagnostics/graph.h>
 #include <common/env.h>
+#include <common/lock.h>
+#include <common/executor.h>
+
+#include <core/mixer/image/image_mixer.h>
+
+#include <tbb/spin_mutex.h>
 
 #include <boost/property_tree/ptree.hpp>
 
@@ -39,74 +47,110 @@
 
 namespace caspar { namespace core {
 
-struct video_channel::implementation : boost::noncopyable
+struct video_channel::impl sealed
 {
-	const int								index_;
-	video_format_desc						format_desc_;
-	const safe_ptr<ogl_device>				ogl_;
-	const safe_ptr<diagnostics::graph>		graph_;
+	monitor::basic_subject							event_subject_;
 
-	const safe_ptr<caspar::core::output>	output_;
-	const safe_ptr<caspar::core::mixer>		mixer_;
-	const safe_ptr<caspar::core::stage>		stage_;
+	const int										index_;
+
+	mutable tbb::spin_mutex							format_desc_mutex_;
+	core::video_format_desc							format_desc_;
 	
+	const spl::shared_ptr<diagnostics::graph>		graph_;
+
+	caspar::core::output							output_;
+	spl::shared_ptr<image_mixer>					image_mixer_;
+	caspar::core::mixer								mixer_;
+	caspar::core::stage								stage_;	
+
+	executor										executor_;
 public:
-	implementation(int index, const video_format_desc& format_desc, const safe_ptr<ogl_device>& ogl)  
-		: index_(index)
+	impl(int index, const core::video_format_desc& format_desc, std::unique_ptr<image_mixer> image_mixer)  
+		: event_subject_(monitor::path() % "channel" % index)
+		, index_(index)
 		, format_desc_(format_desc)
-		, ogl_(ogl)
-		, output_(new caspar::core::output(graph_, format_desc, index))
-		, mixer_(new caspar::core::mixer(graph_, output_, format_desc, ogl))
-		, stage_(new caspar::core::stage(graph_, mixer_, format_desc))	
+		, output_(graph_, format_desc, index)
+		, image_mixer_(std::move(image_mixer))
+		, mixer_(graph_, image_mixer_)
+		, stage_(graph_)
+		, executor_(L"video_channel")
 	{
+		graph_->set_color("tick-time", diagnostics::color(0.0f, 0.6f, 0.9f));	
 		graph_->set_text(print());
 		diagnostics::register_graph(graph_);
+		
+		output_.subscribe(event_subject_);
+		stage_.subscribe(event_subject_);
 
-		for(int n = 0; n < std::max(1, env::properties().get(L"configuration.pipeline-tokens", 2)); ++n)
-			stage_->spawn_token();
+		executor_.begin_invoke([=]{tick();});
 
 		CASPAR_LOG(info) << print() << " Successfully Initialized.";
 	}
-	
-	void set_video_format_desc(const video_format_desc& format_desc)
+							
+	core::video_format_desc video_format_desc() const
 	{
-		if(format_desc.format == core::video_format::invalid)
-			BOOST_THROW_EXCEPTION(invalid_argument() << msg_info("Invalid video-format"));
+		return lock(format_desc_mutex_, [&]
+		{
+			return format_desc_;
+		});
+	}
+		
+	void video_format_desc(const core::video_format_desc& format_desc)
+	{
+		lock(format_desc_mutex_, [&]
+		{
+			format_desc_ = format_desc;
+			stage_.clear();
+		});
+	}
 
+	void tick()
+	{
 		try
 		{
-			output_->set_video_format_desc(format_desc);
-			mixer_->set_video_format_desc(format_desc);
-			stage_->set_video_format_desc(format_desc);
-			ogl_->gc();
+
+			auto format_desc = video_format_desc();
+			
+			boost::timer frame_timer;
+
+			// Produce
+			
+			auto stage_frames = stage_(format_desc);
+			
+			// Mix
+			
+			auto mixed_frame  = mixer_(std::move(stage_frames), format_desc);
+			
+			// Consume
+						
+			output_(std::move(mixed_frame), format_desc);
+		
+			graph_->set_value("tick-time", frame_timer.elapsed()*format_desc.fps*0.5);
+
+			event_subject_	<< monitor::event("profiler/time")	% frame_timer.elapsed() % (1.0/format_desc_.fps)
+							<< monitor::event("format")			% format_desc.name;
 		}
 		catch(...)
 		{
-			output_->set_video_format_desc(format_desc_);
-			mixer_->set_video_format_desc(format_desc_);
-			stage_->set_video_format_desc(format_desc_);
-			throw;
+			CASPAR_LOG_CURRENT_EXCEPTION();
 		}
-		format_desc_ = format_desc;
+
+		executor_.begin_invoke([=]{tick();});
 	}
-		
+			
 	std::wstring print() const
 	{
-		return L"video_channel[" + boost::lexical_cast<std::wstring>(index_) + L"|" +  format_desc_.name + L"]";
+		return L"video_channel[" + boost::lexical_cast<std::wstring>(index_) + L"|" +  video_format_desc().name + L"]";
 	}
 
 	boost::property_tree::wptree info() const
 	{
 		boost::property_tree::wptree info;
 
-		auto stage_info  = stage_->info();
-		auto mixer_info  = mixer_->info();
-		auto output_info = output_->info();
+		auto stage_info  = stage_.info();
+		auto mixer_info  = mixer_.info();
+		auto output_info = output_.info();
 
-		stage_info.timed_wait(boost::posix_time::seconds(2));
-		mixer_info.timed_wait(boost::posix_time::seconds(2));
-		output_info.timed_wait(boost::posix_time::seconds(2));
-		
 		info.add(L"video-mode", format_desc_.name);
 		info.add_child(L"stage", stage_info.get());
 		info.add_child(L"mixer", mixer_info.get());
@@ -116,13 +160,19 @@ public:
 	}
 };
 
-video_channel::video_channel(int index, const video_format_desc& format_desc, const safe_ptr<ogl_device>& ogl) : impl_(new implementation(index, format_desc, ogl)){}
-safe_ptr<stage> video_channel::stage() { return impl_->stage_;} 
-safe_ptr<mixer> video_channel::mixer() { return impl_->mixer_;} 
-safe_ptr<output> video_channel::output() { return impl_->output_;} 
-video_format_desc video_channel::get_video_format_desc() const{return impl_->format_desc_;}
-void video_channel::set_video_format_desc(const video_format_desc& format_desc){impl_->set_video_format_desc(format_desc);}
-boost::property_tree::wptree video_channel::info() const{return impl_->info();}
-int video_channel::index() const {return impl_->index_;}
+video_channel::video_channel(int index, const core::video_format_desc& format_desc, std::unique_ptr<image_mixer> image_mixer) : impl_(new impl(index, format_desc, std::move(image_mixer))){}
+video_channel::~video_channel(){}
+const stage& video_channel::stage() const { return impl_->stage_;} 
+stage& video_channel::stage() { return impl_->stage_;} 
+const mixer& video_channel::mixer() const{ return impl_->mixer_;} 
+mixer& video_channel::mixer() { return impl_->mixer_;} 
+const output& video_channel::output() const { return impl_->output_;} 
+output& video_channel::output() { return impl_->output_;} 
+spl::shared_ptr<frame_factory> video_channel::frame_factory() { return impl_->image_mixer_;} 
+core::video_format_desc video_channel::video_format_desc() const{return impl_->video_format_desc();}
+void core::video_channel::video_format_desc(const core::video_format_desc& format_desc){impl_->video_format_desc(format_desc);}
+boost::property_tree::wptree video_channel::info() const{return impl_->info();}		
+void video_channel::subscribe(const monitor::observable::observer_ptr& o) {impl_->event_subject_.subscribe(o);}
+void video_channel::unsubscribe(const monitor::observable::observer_ptr& o) {impl_->event_subject_.unsubscribe(o);}
 
 }}

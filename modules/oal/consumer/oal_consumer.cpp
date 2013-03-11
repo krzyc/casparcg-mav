@@ -21,159 +21,256 @@
 
 #include "oal_consumer.h"
 
-#include <common/exception/exceptions.h>
+#include <common/except.h>
+#include <common/executor.h>
 #include <common/diagnostics/graph.h>
-#include <common/log/log.h>
-#include <common/utility/timer.h>
-#include <common/utility/string.h>
-#include <common/concurrency/future_util.h>
+#include <common/log.h>
+#include <common/utf.h>
+#include <common/env.h>
+#include <common/future.h>
 
 #include <core/consumer/frame_consumer.h>
+#include <core/frame/frame.h>
 #include <core/mixer/audio/audio_util.h>
+#include <core/mixer/audio/audio_mixer.h>
 #include <core/video_format.h>
 
-#include <core/mixer/read_frame.h>
-
-#include <SFML/Audio.hpp>
-
 #include <boost/circular_buffer.hpp>
+#include <boost/lexical_cast.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/timer.hpp>
-#include <boost/thread/future.hpp>
-#include <boost/optional.hpp>
+#include <boost/foreach.hpp>
+#include <boost/thread/once.hpp>
 
 #include <tbb/concurrent_queue.h>
+
+#include <al/alc.h>
+#include <al/al.h>
+
+#include <array>
 
 namespace caspar { namespace oal {
 
 typedef std::vector<int16_t, tbb::cache_aligned_allocator<int16_t>> audio_buffer_16;
 
-struct oal_consumer : public core::frame_consumer,  public sf::SoundStream
+class device
 {
-	safe_ptr<diagnostics::graph>						graph_;
+	ALCdevice*											device_;
+	ALCcontext*											context_;
+
+public:
+	device()
+		: device_(0)
+		, context_(0)
+	{
+		device_ = alcOpenDevice(nullptr);
+
+		if(!device_)
+			CASPAR_THROW_EXCEPTION(invalid_operation() << msg_info("Failed to initialize audio device."));
+
+		context_ = alcCreateContext(device_, nullptr);
+
+		if(!context_)
+			CASPAR_THROW_EXCEPTION(invalid_operation() << msg_info("Failed to create audio context."));
+			
+		if(alcMakeContextCurrent(context_) == ALC_FALSE)
+			CASPAR_THROW_EXCEPTION(invalid_operation() << msg_info("Failed to activate audio context."));
+	}
+
+	~device()
+	{
+		alcMakeContextCurrent(nullptr);
+
+		if(context_)
+			alcDestroyContext(context_);
+
+		if(device_)
+			alcCloseDevice(device_);
+	}
+
+	ALCdevice* get()
+	{
+		return device_;
+	}
+};
+
+void init_device()
+{
+	static std::unique_ptr<device> instance;
+	static boost::once_flag f = BOOST_ONCE_INIT;
+	
+	boost::call_once(f, []{instance.reset(new device());});
+}
+
+struct oal_consumer : public core::frame_consumer
+{
+	spl::shared_ptr<diagnostics::graph>					graph_;
 	boost::timer										perf_timer_;
 	int													channel_index_;
-
-	tbb::concurrent_bounded_queue<std::shared_ptr<audio_buffer_16>>	input_;
-	boost::circular_buffer<audio_buffer_16>				container_;
-	tbb::atomic<bool>									is_running_;
-	core::audio_buffer									temp;
-
+	
 	core::video_format_desc								format_desc_;
+
+	ALuint												source_;
+	std::array<ALuint, 3>								buffers_;
+
+	executor											executor_;
+
 public:
 	oal_consumer() 
-		: container_(16)
-		, channel_index_(-1)
+		: channel_index_(-1)
+		, source_(0)
+		, executor_(L"oal_consumer")
 	{
+		buffers_.assign(0);
+
+		init_device();
+
 		graph_->set_color("tick-time", diagnostics::color(0.0f, 0.6f, 0.9f));	
 		graph_->set_color("dropped-frame", diagnostics::color(0.3f, 0.6f, 0.3f));
 		graph_->set_color("late-frame", diagnostics::color(0.6f, 0.3f, 0.3f));
 		diagnostics::register_graph(graph_);
-
-		is_running_ = true;
-		input_.set_capacity(1);
 	}
 
 	~oal_consumer()
 	{
-		is_running_ = false;
-		input_.try_push(std::make_shared<audio_buffer_16>());
-		input_.try_push(std::make_shared<audio_buffer_16>());
-		Stop();
-		input_.try_push(std::make_shared<audio_buffer_16>());
-		input_.try_push(std::make_shared<audio_buffer_16>());
+		executor_.begin_invoke([=]
+		{		
+			if(source_)
+			{
+				alSourceStop(source_);
+				alDeleteSources(1, &source_);
+			}
 
-		CASPAR_LOG(info) << print() << L" Successfully Uninitialized.";	
+			BOOST_FOREACH(auto& buffer, buffers_)
+			{
+				if(buffer)
+					alDeleteBuffers(1, &buffer);
+			};
+		});
 	}
 
 	// frame consumer
 
-	virtual void initialize(const core::video_format_desc& format_desc, int channel_index) override
+	void initialize(const core::video_format_desc& format_desc, int channel_index) override
 	{
 		format_desc_	= format_desc;		
 		channel_index_	= channel_index;
 		graph_->set_text(print());
+		
+		executor_.begin_invoke([=]
+		{		
+			alGenBuffers(static_cast<ALsizei>(buffers_.size()), buffers_.data());
+			alGenSources(1, &source_);
 
-		if(Status() != Playing)
-		{
-			sf::SoundStream::Initialize(2, 48000);
-			Play();		
-		}
-		CASPAR_LOG(info) << print() << " Sucessfully Initialized.";
+			for(std::size_t n = 0; n < buffers_.size(); ++n)
+			{
+				std::vector<int16_t> audio(format_desc_.audio_cadence[n % format_desc_.audio_cadence.size()], 0);
+				alBufferData(buffers_[n], AL_FORMAT_STEREO16, audio.data(), static_cast<ALsizei>(audio.size()*sizeof(int16_t)), format_desc_.audio_sample_rate);
+				alSourceQueueBuffers(source_, 1, &buffers_[n]);
+			}
+			
+			alSourcei(source_, AL_LOOPING, AL_FALSE);
+
+			alSourcePlay(source_);	
+		});
 	}
 	
-	virtual boost::unique_future<bool> send(const safe_ptr<core::read_frame>& frame) override
+	boost::unique_future<bool> send(core::const_frame frame) override
 	{
-		auto buffer = std::make_shared<audio_buffer_16>(core::audio_32_to_16(frame->audio_data()));
+		// Will only block if the default executor queue capacity of 512 is
+		// exhausted, which should not happen
+		executor_.begin_invoke([=]
+		{
+			ALenum state; 
+			alGetSourcei(source_, AL_SOURCE_STATE,&state);
+			if(state != AL_PLAYING)
+			{
+				for(int n = 0; n < buffers_.size()-1; ++n)
+				{					
+					ALuint buffer = 0;  
+					alSourceUnqueueBuffers(source_, 1, &buffer);
+					if(buffer)
+					{
+						std::vector<int16_t> audio(format_desc_.audio_cadence[n % format_desc_.audio_cadence.size()], 0);
+						alBufferData(buffer, AL_FORMAT_STEREO16, audio.data(), static_cast<ALsizei>(audio.size()*sizeof(int16_t)), format_desc_.audio_sample_rate);
+						alSourceQueueBuffers(source_, 1, &buffer);
+					}
+				}
+				alSourcePlay(source_);		
+				graph_->set_tag("late-frame");	
+			}
 
-		if (!input_.try_push(buffer))
-			graph_->set_tag("dropped-frame");
+			auto audio = core::audio_32_to_16(frame.audio_data());
+			
+			ALuint buffer = 0;  
+			alSourceUnqueueBuffers(source_, 1, &buffer);
+			if(buffer)
+			{
+				alBufferData(buffer, AL_FORMAT_STEREO16, audio.data(), static_cast<ALsizei>(audio.size()*sizeof(int16_t)), format_desc_.audio_sample_rate);
+				alSourceQueueBuffers(source_, 1, &buffer);
+			}
+			else
+				graph_->set_tag("dropped-frame");
 
+			graph_->set_value("tick-time", perf_timer_.elapsed()*format_desc_.fps*0.5);		
+			perf_timer_.restart();
+		});
 
-		return wrap_as_future(is_running_.load());
+		return wrap_as_future(true);
 	}
 	
-	virtual std::wstring print() const override
+	std::wstring print() const override
 	{
 		return L"oal[" + boost::lexical_cast<std::wstring>(channel_index_) + L"|" + format_desc_.name + L"]";
 	}
 
-	virtual bool has_synchronization_clock() const override
+	std::wstring name() const override
 	{
-		return false;
+		return L"system-audio";
 	}
 
-	virtual boost::property_tree::wptree info() const override
+	boost::property_tree::wptree info() const override
 	{
 		boost::property_tree::wptree info;
-		info.add(L"type", L"oal-consumer");
+		info.add(L"type", L"system-audio");
 		return info;
 	}
 	
-	virtual size_t buffer_depth() const override
+	bool has_synchronization_clock() const override
 	{
-		return 6;
+		return false;
 	}
-
-	// oal_consumer
 	
-	virtual bool OnGetData(sf::SoundStream::Chunk& data) override
-	{		
-		std::shared_ptr<audio_buffer_16> audio_data;		
-
-		if (!input_.try_pop(audio_data))
-		{
-			graph_->set_tag("late-frame");
-			input_.pop(audio_data); // Block until available
-		}
-
-		container_.push_back(std::move(*audio_data));
-		data.Samples = container_.back().data();
-		data.NbSamples = container_.back().size();	
-		
-		graph_->set_value("tick-time", perf_timer_.elapsed()*format_desc_.fps*0.5);		
-		perf_timer_.restart();
-
-		return is_running_;
+	int buffer_depth() const override
+	{
+		return 3;
 	}
-
-	virtual int index() const override
+		
+	int index() const override
 	{
 		return 500;
 	}
+
+	void subscribe(const monitor::observable::observer_ptr& o) override
+	{
+	}
+
+	void unsubscribe(const monitor::observable::observer_ptr& o) override
+	{
+	}	
 };
 
-safe_ptr<core::frame_consumer> create_consumer(const std::vector<std::wstring>& params)
+spl::shared_ptr<core::frame_consumer> create_consumer(const std::vector<std::wstring>& params)
 {
 	if(params.size() < 1 || params[0] != L"AUDIO")
 		return core::frame_consumer::empty();
 
-	return make_safe<oal_consumer>();
+	return spl::make_shared<oal_consumer>();
 }
 
-safe_ptr<core::frame_consumer> create_consumer()
+spl::shared_ptr<core::frame_consumer> create_consumer()
 {
-	return make_safe<oal_consumer>();
+	return spl::make_shared<oal_consumer>();
 }
 
 }}

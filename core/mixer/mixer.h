@@ -23,60 +23,48 @@
 
 #include "image/blend_modes.h"
 
-#include "../producer/frame/frame_factory.h"
+#include <common/forward.h>
+#include <common/future_fwd.h>
+#include <common/memory.h>
+#include <common/reactive.h>
 
-#include <common/memory/safe_ptr.h>
-#include <common/concurrency/target.h>
-#include <common/diagnostics/graph.h>
+#include <core/video_format.h>
 
 #include <boost/property_tree/ptree_fwd.hpp>
-#include <boost/thread/future.hpp>
 
 #include <map>
 
-namespace caspar { 
+FORWARD2(caspar, diagnostics, class graph);
 
-class executor;
+namespace caspar { namespace core {
 	
-namespace core {
-
-class read_frame;
-class write_frame;
-class basic_frame;
-class ogl_device;
-struct frame_transform;
-struct pixel_format;
-
-class mixer : public target<std::pair<std::map<int, safe_ptr<core::basic_frame>>, std::shared_ptr<void>>>
-			, public core::frame_factory
+class mixer sealed
 {
-public:	
-	typedef target<std::pair<safe_ptr<read_frame>, std::shared_ptr<void>>> target_t;
-
-	explicit mixer(const safe_ptr<diagnostics::graph>& graph, const safe_ptr<target_t>& target, const video_format_desc& format_desc, const safe_ptr<ogl_device>& ogl);
-		
-	// target
-
-	virtual void send(const std::pair<std::map<int, safe_ptr<basic_frame>>, std::shared_ptr<void>>& frames) override; 
-		
-	// mixer
-
-	safe_ptr<core::write_frame> create_frame(const void* tag, const core::pixel_format_desc& desc);		
+	mixer(const mixer&);
+	mixer& operator=(const mixer&);
+public:
 	
-	core::video_format_desc get_video_format_desc() const; // nothrow
-	void set_video_format_desc(const video_format_desc& format_desc);
+	// Static Members
+					
+	// Constructors
 	
-	void set_blend_mode(int index, blend_mode::type value);
-	void clear_blend_mode(int index);
-	void clear_blend_modes();
+	explicit mixer(spl::shared_ptr<diagnostics::graph> graph, spl::shared_ptr<class image_mixer> image_mixer);
 
-	void set_master_volume(float volume);
+	// Methods
+		
+	class const_frame operator()(std::map<int, class draw_frame> frames, const struct video_format_desc& format_desc);
+	
+	void set_blend_mode(int index, blend_mode value);
+
+	class mutable_frame create_frame(const void* tag, const struct pixel_format_desc& desc);
+
+	// Properties
 
 	boost::unique_future<boost::property_tree::wptree> info() const;
-	
+
 private:
-	struct implementation;
-	safe_ptr<implementation> impl_;
+	struct impl;
+	spl::shared_ptr<impl> impl_;
 };
 
 }}

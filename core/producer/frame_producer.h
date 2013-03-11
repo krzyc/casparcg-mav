@@ -21,68 +21,100 @@
 
 #pragma once
 
-#include <common/memory/safe_ptr.h>
-#include <common/exception/exceptions.h>
+#include "../monitor/monitor.h"
+#include "../video_format.h"
 
-#include <boost/noncopyable.hpp>
+#include <common/forward.h>
+#include <common/future_fwd.h>
+#include <common/memory.h>
+#include <common/enum_class.h>
 
-#include <algorithm>
+#include <cstdint>
+#include <limits>
 #include <functional>
 #include <string>
+#include <type_traits>
 #include <vector>
-#include <stdint.h>
-#include <numeric>
 
-#include <boost/thread/future.hpp>
 #include <boost/property_tree/ptree_fwd.hpp>
 
-namespace caspar { 
-	
-class executor;
-	
-namespace core {
+FORWARD1(caspar, class executor);
 
-class basic_frame;
-struct frame_factory;
-
-struct frame_producer : boost::noncopyable
+namespace caspar { namespace core {
+	
+// Interface
+class frame_producer : public monitor::observable
 {
+	frame_producer(const frame_producer&);
+	frame_producer& operator=(const frame_producer&);
 public:
-	enum hints
-	{
-		NO_HINT = 0,
-		ALPHA_HINT = 1,
-		DEINTERLACE_HINT
-	};
 
+	// Static Members
+	
+	static const spl::shared_ptr<frame_producer>& empty();
+
+	// Constructors
+
+	frame_producer(){}
 	virtual ~frame_producer(){}	
 
-	virtual std::wstring print() const = 0; // nothrow
-	virtual boost::property_tree::wptree info() const = 0;
+	// Methods	
 
-	virtual boost::unique_future<std::wstring> call(const std::wstring&) 
-	{
-		BOOST_THROW_EXCEPTION(not_supported());
-	}
-
-	virtual safe_ptr<frame_producer> get_following_producer() const {return frame_producer::empty();}  // nothrow
-	virtual void set_leading_producer(const safe_ptr<frame_producer>&) {}  // nothrow
-		
-	virtual uint32_t nb_frames() const {return std::numeric_limits<uint32_t>::max();}
+	virtual class draw_frame					receive() = 0;
+	virtual boost::unique_future<std::wstring>	call(const std::wstring& params) = 0;
 	
-	virtual safe_ptr<basic_frame> receive(int hints) = 0;
-	virtual safe_ptr<core::basic_frame> last_frame() const = 0;
+	// monitor::observable
 
-	static const safe_ptr<frame_producer>& empty(); // nothrow
+	virtual void subscribe(const monitor::observable::observer_ptr& o) = 0;
+	virtual void unsubscribe(const monitor::observable::observer_ptr& o) = 0;
+
+	// Properties
+	
+
+	virtual void								paused(bool value) = 0;
+	virtual std::wstring						print() const = 0;
+	virtual std::wstring						name() const = 0;
+	virtual boost::property_tree::wptree		info() const = 0;
+	virtual uint32_t							nb_frames() const = 0;
+	virtual uint32_t							frame_number() const = 0;
+	virtual class draw_frame					last_frame() = 0;
+	virtual void								leading_producer(const spl::shared_ptr<frame_producer>&) {}  
 };
 
-safe_ptr<basic_frame> receive_and_follow(safe_ptr<frame_producer>& producer, int hints);
+class frame_producer_base : public frame_producer
+{
+public:
+	frame_producer_base();
+	virtual ~frame_producer_base(){}	
 
-typedef std::function<safe_ptr<core::frame_producer>(const safe_ptr<frame_factory>&, const std::vector<std::wstring>&)> producer_factory_t;
+	// Methods	
+
+	virtual boost::unique_future<std::wstring>	call(const std::wstring& params);
+	
+	// monitor::observable
+	
+	// Properties
+	
+	void						paused(bool value) override;	
+	uint32_t					nb_frames() const override;
+	uint32_t					frame_number() const override;
+	virtual class draw_frame	last_frame() override;
+
+private:
+	virtual class draw_frame	receive() override;
+	virtual class draw_frame	receive_impl() = 0;
+
+	struct impl;
+	friend struct impl;
+	std::shared_ptr<impl> impl_;
+};
+
+typedef std::function<spl::shared_ptr<core::frame_producer>(const spl::shared_ptr<class frame_factory>&, const video_format_desc& format_desc, const std::vector<std::wstring>&)> producer_factory_t;
 void register_producer_factory(const producer_factory_t& factory); // Not thread-safe.
-safe_ptr<core::frame_producer> create_producer(const safe_ptr<frame_factory>&, const std::vector<std::wstring>& params);
-safe_ptr<core::frame_producer> create_producer(const safe_ptr<frame_factory>&, const std::wstring& params);
-safe_ptr<core::frame_producer> create_producer_destroy_proxy(safe_ptr<core::frame_producer> producer);
-safe_ptr<core::frame_producer> create_producer_print_proxy(safe_ptr<core::frame_producer> producer);
 
+spl::shared_ptr<core::frame_producer> create_producer(const spl::shared_ptr<frame_factory>&, const video_format_desc& format_desc, const std::vector<std::wstring>& params);
+spl::shared_ptr<core::frame_producer> create_producer(const spl::shared_ptr<frame_factory>&, const video_format_desc& format_desc, const std::wstring& params);
+
+spl::shared_ptr<core::frame_producer> create_destroy_proxy(spl::shared_ptr<core::frame_producer> producer);
+		
 }}

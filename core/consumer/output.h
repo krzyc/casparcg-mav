@@ -21,43 +21,52 @@
 
 #pragma once
 
-#include "../consumer/frame_consumer.h"
+#include "../monitor/monitor.h"
 
-#include <common/memory/safe_ptr.h>
-#include <common/concurrency/target.h>
-#include <common/diagnostics/graph.h>
+#include <common/forward.h>
+#include <common/future_fwd.h>
+#include <common/memory.h>
+#include <common/reactive.h>
 
-#include <boost/noncopyable.hpp>
 #include <boost/property_tree/ptree_fwd.hpp>
-#include <boost/thread/future.hpp>
+
+FORWARD2(caspar, diagnostics, class graph);
 
 namespace caspar { namespace core {
 	
-class output : public target<std::pair<safe_ptr<read_frame>, std::shared_ptr<void>>>
-			 , boost::noncopyable
+class output sealed : public monitor::observable
 {
+	output(const output&);
+	output& operator=(const output&);
 public:
-	explicit output(const safe_ptr<diagnostics::graph>& graph, const video_format_desc& format_desc, int channel_index);
 
-	// target
-	
-	virtual void send( const std::pair<safe_ptr<read_frame>, std::shared_ptr<void>>& frame) override;
+	// Static Members
 
-	// output
+	// Constructors
+
+	explicit output(spl::shared_ptr<diagnostics::graph> graph, const struct video_format_desc& format_desc, int channel_index);
 	
-	void add(const safe_ptr<frame_consumer>& consumer);
-	void add(int index, const safe_ptr<frame_consumer>& consumer);
-	void remove(const safe_ptr<frame_consumer>& consumer);
+	// Methods
+
+	void operator()(class const_frame frame, const struct video_format_desc& format_desc);
+	
+	void add(const spl::shared_ptr<class frame_consumer>& consumer);
+	void add(int index, const spl::shared_ptr<class frame_consumer>& consumer);
+	void remove(const spl::shared_ptr<class frame_consumer>& consumer);
 	void remove(int index);
 	
-	void set_video_format_desc(const video_format_desc& format_desc);
+	// monitor::observable
+
+	void subscribe(const monitor::observable::observer_ptr& o) override;
+	void unsubscribe(const monitor::observable::observer_ptr& o) override;
+
+	// Properties
 
 	boost::unique_future<boost::property_tree::wptree> info() const;
 
-	bool empty() const;
 private:
-	struct implementation;
-	safe_ptr<implementation> impl_;
+	struct impl;
+	spl::shared_ptr<impl> impl_;
 };
 
 }}

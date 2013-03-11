@@ -48,12 +48,12 @@ using IO::ClientInfoPtr;
 
 const std::wstring AMCPProtocolStrategy::MessageDelimiter = TEXT("\r\n");
 
-inline std::shared_ptr<core::video_channel> GetChannelSafe(unsigned int index, const std::vector<safe_ptr<core::video_channel>>& channels)
+inline std::shared_ptr<core::video_channel> GetChannelSafe(unsigned int index, const std::vector<spl::shared_ptr<core::video_channel>>& channels)
 {
 	return index < channels.size() ? std::shared_ptr<core::video_channel>(channels[index]) : nullptr;
 }
 
-AMCPProtocolStrategy::AMCPProtocolStrategy(const std::vector<safe_ptr<core::video_channel>>& channels) : channels_(channels) {
+AMCPProtocolStrategy::AMCPProtocolStrategy(const std::vector<spl::shared_ptr<core::video_channel>>& channels) : channels_(channels) {
 	AMCPCommandQueuePtr pGeneralCommandQueue(new AMCPCommandQueue());
 	commandQueues_.push_back(pGeneralCommandQueue);
 
@@ -191,10 +191,10 @@ AMCPCommandPtr AMCPProtocolStrategy::InterpretCommandString(const std::wstring& 
 				if(commandSwitch.size() > 0) {
 					transform(commandSwitch.begin(), commandSwitch.end(), commandSwitch.begin(), toupper);
 
-					if(commandSwitch == TEXT("/APP"))
-						pCommand->SetScheduling(AddToQueue);
-					else if(commandSwitch  == TEXT("/IMMF"))
-						pCommand->SetScheduling(ImmediatelyAndClear);
+					//if(commandSwitch == TEXT("/APP"))
+					//	pCommand->SetScheduling(AddToQueue);
+					//else if(commandSwitch  == TEXT("/IMMF"))
+					//	pCommand->SetScheduling(ImmediatelyAndClear);
 				}
 
 				if(pCommand->NeedChannel())
@@ -251,6 +251,7 @@ AMCPCommandPtr AMCPProtocolStrategy::InterpretCommandString(const std::wstring& 
 				}
 
 				pCommand->SetChannel(pChannel);
+				pCommand->SetChannels(channels_);
 				pCommand->SetChannelIndex(channelIndex);
 				pCommand->SetLayerIntex(layerIndex);
 

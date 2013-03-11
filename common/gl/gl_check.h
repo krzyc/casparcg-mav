@@ -1,4 +1,4 @@
-////////////////////////////////////////////////////////////
+///////////////////////////
 //
 // SFML - Simple and Fast Multimedia Library
 // Copyright (C) 2007-2009 Laurent Gomila (laurent.gom@gmail.com)
@@ -20,11 +20,11 @@
 //
 // 3. This notice may not be removed or altered from any source distribution.
 //
-////////////////////////////////////////////////////////////
+///////////////////////////
 
 #pragma once
 
-#include "../exception/exceptions.h"
+#include "../except.h"
 
 namespace caspar { namespace gl {
 

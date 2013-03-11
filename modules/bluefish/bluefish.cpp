@@ -19,14 +19,16 @@
 * Author: Robert Nagy, ronag89@gmail.com
 */
 
+#include "StdAfx.h"
+
 #include "bluefish.h"
 
 #include "consumer/bluefish_consumer.h"
 
 #include "util/blue_velvet.h"
 
-#include <common/log/log.h>
-#include <common/utility/string.h>
+#include <common/log.h>
+#include <common/utf.h>
 
 #include <core/consumer/frame_consumer.h>
 
@@ -47,7 +49,7 @@ void init()
 	catch(...){}
 }
 
-std::wstring get_version()
+std::wstring version()
 {
 	try
 	{
@@ -61,10 +63,10 @@ std::wstring get_version()
 	if(!BlueVelvetVersion)
 		return L"Unknown";
 
-	return widen(std::string(BlueVelvetVersion()));
+	return u16(BlueVelvetVersion());
 }
 
-std::vector<std::wstring> get_device_list()
+std::vector<std::wstring> device_list()
 {
 	std::vector<std::wstring> devices;
 

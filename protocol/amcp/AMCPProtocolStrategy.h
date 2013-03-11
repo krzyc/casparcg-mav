@@ -29,6 +29,8 @@
 
 #include <boost/noncopyable.hpp>
 
+#include <string>
+
 namespace caspar { namespace protocol { namespace amcp {
 
 class AMCPProtocolStrategy : public IO::IProtocolStrategy, boost::noncopyable
@@ -46,12 +48,12 @@ class AMCPProtocolStrategy : public IO::IProtocolStrategy, boost::noncopyable
 	AMCPProtocolStrategy& operator=(const AMCPProtocolStrategy&);
 
 public:
-	AMCPProtocolStrategy(const std::vector<safe_ptr<core::video_channel>>& channels);
+	AMCPProtocolStrategy(const std::vector<spl::shared_ptr<core::video_channel>>& channels);
 	virtual ~AMCPProtocolStrategy();
 
 	virtual void Parse(const TCHAR* pData, int charCount, IO::ClientInfoPtr pClientInfo);
-	virtual UINT GetCodepage() {
-		return CP_UTF8;
+	virtual std::string GetCodepage() {
+		return "UTF-8";
 	}
 
 	AMCPCommandPtr InterpretCommandString(const std::wstring& str, MessageParserState* pOutState=0);
@@ -65,7 +67,7 @@ private:
 
 	bool QueueCommand(AMCPCommandPtr);
 
-	std::vector<safe_ptr<core::video_channel>> channels_;
+	std::vector<spl::shared_ptr<core::video_channel>> channels_;
 	std::vector<AMCPCommandQueuePtr> commandQueues_;
 	static const std::wstring MessageDelimiter;
 };

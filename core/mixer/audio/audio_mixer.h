@@ -21,46 +21,48 @@
 
 #pragma once
 
-#include <common/memory/safe_ptr.h>
+#include <common/forward.h>
+#include <common/memory.h>
 
-#include <core/producer/frame/frame_visitor.h>
-
-#include <boost/noncopyable.hpp>
+#include <core/frame/frame_visitor.h>
 
 #include <tbb/cache_aligned_allocator.h>
 
 #include <vector>
 
-namespace caspar {
-	
-namespace diagnostics {
-	
-class graph;
+FORWARD2(caspar, diagnostics, class graph);
 
-}
-
-namespace core {
-
-struct video_format_desc;
-	
+namespace caspar { namespace core {
+		
 typedef std::vector<int32_t, tbb::cache_aligned_allocator<int32_t>> audio_buffer;
 
-class audio_mixer : public core::frame_visitor, boost::noncopyable
+class audio_mixer sealed : public frame_visitor
 {
+	audio_mixer(const audio_mixer&);
+	audio_mixer& operator=(const audio_mixer&);
 public:
-	audio_mixer(const safe_ptr<diagnostics::graph>& graph);
 
-	virtual void begin(core::basic_frame& frame);
-	virtual void visit(core::write_frame& frame);
-	virtual void end();
+	// Static Members
 
-	void set_master_volume(float volume);
+	// Constructors
 
-	audio_buffer operator()(const video_format_desc& format_desc);
+	audio_mixer();
+
+	// Methods
 	
+	audio_buffer operator()(const struct video_format_desc& format_desc);
+
+	// frame_visitor
+
+	virtual void push(const struct frame_transform& transform);
+	virtual void visit(const class const_frame& frame);
+	virtual void pop();
+	
+	// Properties
+
 private:
-	struct implementation;
-	safe_ptr<implementation> impl_;
+	struct impl;
+	spl::shared_ptr<impl> impl_;
 };
 
 }}

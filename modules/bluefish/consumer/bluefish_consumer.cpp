@@ -26,23 +26,25 @@
 #include "../util/memory.h"
 
 #include <core/video_format.h>
-#include <core/mixer/read_frame.h>
+#include <core/frame/frame.h>
 
-#include <common/concurrency/executor.h>
+#include <common/executor.h>
 #include <common/diagnostics/graph.h>
-#include <common/memory/memclr.h>
-#include <common/memory/memcpy.h>
-#include <common/memory/memshfl.h>
-#include <common/utility/timer.h>
+#include <common/array.h>
+#include <common/memshfl.h>
 
 #include <core/consumer/frame_consumer.h>
 #include <core/mixer/audio/audio_util.h>
 
 #include <tbb/concurrent_queue.h>
 
+#include <common/assert.h>
+#include <boost/lexical_cast.hpp>
 #include <boost/timer.hpp>
 #include <boost/range/algorithm.hpp>
 #include <boost/property_tree/ptree.hpp>
+
+#include <asmlib.h>
 
 #include <memory>
 #include <array>
@@ -51,14 +53,14 @@ namespace caspar { namespace bluefish {
 			
 struct bluefish_consumer : boost::noncopyable
 {
-	safe_ptr<CBlueVelvet4>				blue_;
+	spl::shared_ptr<CBlueVelvet4>				blue_;
 	const unsigned int					device_index_;
 	const core::video_format_desc		format_desc_;
 	const int							channel_index_;
 
 	const std::wstring					model_name_;
 
-	safe_ptr<diagnostics::graph>		graph_;
+	spl::shared_ptr<diagnostics::graph>		graph_;
 	boost::timer						frame_timer_;
 	boost::timer						tick_timer_;
 	boost::timer						sync_timer_;	
@@ -66,14 +68,14 @@ struct bluefish_consumer : boost::noncopyable
 	unsigned int						vid_fmt_;
 
 	std::array<blue_dma_buffer_ptr, 4>	reserved_frames_;	
-	tbb::concurrent_bounded_queue<std::shared_ptr<core::read_frame>> frame_buffer_;
+	tbb::concurrent_bounded_queue<core::const_frame> frame_buffer_;
 	
 	const bool							embedded_audio_;
 	const bool							key_only_;
 		
 	executor							executor_;
 public:
-	bluefish_consumer(const core::video_format_desc& format_desc, unsigned int device_index, bool embedded_audio, bool key_only, int channel_index) 
+	bluefish_consumer(const core::video_format_desc& format_desc, int device_index, bool embedded_audio, bool key_only, int channel_index) 
 		: blue_(create_blue(device_index))
 		, device_index_(device_index)
 		, format_desc_(format_desc) 
@@ -94,35 +96,35 @@ public:
 			
 		//Setting output Video mode
 		if(BLUE_FAIL(set_card_property(blue_, VIDEO_MODE, vid_fmt_))) 
-			BOOST_THROW_EXCEPTION(caspar_exception() << msg_info(narrow(print()) + " Failed to set videomode."));
+			CASPAR_THROW_EXCEPTION(caspar_exception() << msg_info(print() + L" Failed to set videomode."));
 
 		//Select Update Mode for output
 		if(BLUE_FAIL(set_card_property(blue_, VIDEO_UPDATE_TYPE, UPD_FMT_FRAME))) 
-			BOOST_THROW_EXCEPTION(caspar_exception() << msg_info(narrow(print()) + " Failed to set update type."));
+			CASPAR_THROW_EXCEPTION(caspar_exception() << msg_info(print() + L" Failed to set update type."));
 	
 		disable_video_output();
 
 		//Enable dual link output
 		if(BLUE_FAIL(set_card_property(blue_, VIDEO_DUAL_LINK_OUTPUT, 1)))
-			BOOST_THROW_EXCEPTION(caspar_exception() << msg_info(narrow(print()) + " Failed to enable dual link."));
+			CASPAR_THROW_EXCEPTION(caspar_exception() << msg_info(print() + L" Failed to enable dual link."));
 
 		if(BLUE_FAIL(set_card_property(blue_, VIDEO_DUAL_LINK_OUTPUT_SIGNAL_FORMAT_TYPE, Signal_FormatType_4224)))
-			BOOST_THROW_EXCEPTION(caspar_exception() << msg_info(narrow(print()) + " Failed to set dual link format type to 4:2:2:4."));
+			CASPAR_THROW_EXCEPTION(caspar_exception() << msg_info(print() + L" Failed to set dual link format type to 4:2:2:4."));
 			
 		//Select output memory format
 		if(BLUE_FAIL(set_card_property(blue_, VIDEO_MEMORY_FORMAT, MEM_FMT_ARGB_PC))) 
-			BOOST_THROW_EXCEPTION(caspar_exception() << msg_info(narrow(print()) + " Failed to set memory format."));
+			CASPAR_THROW_EXCEPTION(caspar_exception() << msg_info(print() + L" Failed to set memory format."));
 		
 		//Select image orientation
 		if(BLUE_FAIL(set_card_property(blue_, VIDEO_IMAGE_ORIENTATION, ImageOrientation_Normal)))
-			CASPAR_LOG(warning) << print() << TEXT(" Failed to set image orientation to normal.");	
+			CASPAR_LOG(warning) << print() << L" Failed to set image orientation to normal.";	
 
 		// Select data range
 		if(BLUE_FAIL(set_card_property(blue_, VIDEO_RGB_DATA_RANGE, CGR_RANGE))) 
-			CASPAR_LOG(warning) << print() << TEXT(" Failed to set RGB data range to CGR.");	
+			CASPAR_LOG(warning) << print() << L" Failed to set RGB data range to CGR.";	
 		
 		if(BLUE_FAIL(set_card_property(blue_, VIDEO_PREDEFINED_COLOR_MATRIX, vid_fmt_ == VID_FMT_PAL ? MATRIX_601_CGR : MATRIX_709_CGR)))
-			CASPAR_LOG(warning) << print() << TEXT(" Failed to set colormatrix to ") << (vid_fmt_ == VID_FMT_PAL ? TEXT("601 CGR") : TEXT("709 CGR")) << TEXT(".");
+			CASPAR_LOG(warning) << print() << L" Failed to set colormatrix to " << (vid_fmt_ == VID_FMT_PAL ? L"601 CGR" : L"709 CGR") << L".";
 
 		if(!embedded_audio_)
 		{
@@ -152,7 +154,7 @@ public:
 		enable_video_output();
 						
 		int n = 0;
-		boost::range::generate(reserved_frames_, [&]{return std::make_shared<blue_dma_buffer>(format_desc_.size, n++);});
+		boost::range::generate(reserved_frames_, [&]{return std::make_shared<blue_dma_buffer>(static_cast<int>(format_desc_.size), n++);});
 	}
 
 	~bluefish_consumer()
@@ -184,8 +186,8 @@ public:
 			CASPAR_LOG(error)<< print() << TEXT(" Failed to disable video output.");		
 	}
 	
-	boost::unique_future<bool> send(const safe_ptr<core::read_frame>& frame)
-	{
+	boost::unique_future<bool> send(core::const_frame& frame)
+	{					
 		return executor_.begin_invoke([=]() -> bool
 		{
 			try
@@ -203,7 +205,7 @@ public:
 		});
 	}
 
-	void display_frame(const safe_ptr<core::read_frame>& frame)
+	void display_frame(core::const_frame frame)
 	{
 		// Sync
 
@@ -216,31 +218,34 @@ public:
 
 		// Copy to local buffers
 		
-		if(!frame->image_data().empty())
+		if(!frame.image_data().empty())
 		{
 			if(key_only_)						
-				fast_memshfl(reserved_frames_.front()->image_data(), std::begin(frame->image_data()), frame->image_data().size(), 0x0F0F0F0F, 0x0B0B0B0B, 0x07070707, 0x03030303);
+				aligned_memshfl(reserved_frames_.front()->image_data(), frame.image_data().begin(), frame.image_data().size(), 0x0F0F0F0F, 0x0B0B0B0B, 0x07070707, 0x03030303);
 			else
-				fast_memcpy(reserved_frames_.front()->image_data(), std::begin(frame->image_data()), frame->image_data().size());
+				A_memcpy(reserved_frames_.front()->image_data(), frame.image_data().begin(), frame.image_data().size());
 		}
 		else
-			fast_memclr(reserved_frames_.front()->image_data(), reserved_frames_.front()->image_size());
+			A_memset(reserved_frames_.front()->image_data(), 0, reserved_frames_.front()->image_size());
 								
 
 		// Send and display
 
 		if(embedded_audio_)
 		{		
-			auto frame_audio = core::audio_32_to_24(frame->audio_data());			
-			encode_hanc(reinterpret_cast<BLUE_UINT32*>(reserved_frames_.front()->hanc_data()), frame_audio.data(), frame->audio_data().size()/format_desc_.audio_channels, format_desc_.audio_channels);
+			auto frame_audio = core::audio_32_to_24(frame.audio_data());			
+			encode_hanc(reinterpret_cast<BLUE_UINT32*>(reserved_frames_.front()->hanc_data()), 
+						frame_audio.data(), 
+						static_cast<int>(frame.audio_data().size()/format_desc_.audio_channels), 
+						static_cast<int>(format_desc_.audio_channels));
 								
 			blue_->system_buffer_write_async(const_cast<uint8_t*>(reserved_frames_.front()->image_data()), 
-											reserved_frames_.front()->image_size(), 
+											static_cast<unsigned long>(reserved_frames_.front()->image_size()), 
 											nullptr, 
 											BlueImage_HANC_DMABuffer(reserved_frames_.front()->id(), BLUE_DATA_IMAGE));
 
 			blue_->system_buffer_write_async(reserved_frames_.front()->hanc_data(),
-											reserved_frames_.front()->hanc_size(), 
+											static_cast<unsigned long>(reserved_frames_.front()->hanc_size()), 
 											nullptr,                 
 											BlueImage_HANC_DMABuffer(reserved_frames_.front()->id(), BLUE_DATA_HANC));
 
@@ -250,7 +255,7 @@ public:
 		else
 		{
 			blue_->system_buffer_write_async(const_cast<uint8_t*>(reserved_frames_.front()->image_data()),
-											reserved_frames_.front()->image_size(), 
+											static_cast<unsigned long>(reserved_frames_.front()->image_size()), 
 											nullptr,                 
 											BlueImage_DMABuffer(reserved_frames_.front()->id(), BLUE_DATA_IMAGE));
 			
@@ -263,7 +268,7 @@ public:
 		graph_->set_value("frame-time", static_cast<float>(frame_timer_.elapsed()*format_desc_.fps*0.5));
 	}
 
-	void encode_hanc(BLUE_UINT32* hanc_data, void* audio_data, size_t audio_samples, size_t audio_nchannels)
+	void encode_hanc(BLUE_UINT32* hanc_data, void* audio_data, int audio_samples, int audio_nchannels)
 	{	
 		const auto sample_type = AUDIO_CHANNEL_24BIT | AUDIO_CHANNEL_LITTLEENDIAN;
 		const auto emb_audio_flag = blue_emb_audio_enable | blue_emb_audio_group1_enable;
@@ -294,92 +299,90 @@ public:
 struct bluefish_consumer_proxy : public core::frame_consumer
 {
 	std::unique_ptr<bluefish_consumer>	consumer_;
-	const size_t						device_index_;
+	const int							device_index_;
 	const bool							embedded_audio_;
 	const bool							key_only_;
-	std::vector<size_t>					audio_cadence_;
 public:
 
-	bluefish_consumer_proxy(size_t device_index, bool embedded_audio, bool key_only)
+	bluefish_consumer_proxy(int device_index, bool embedded_audio, bool key_only)
 		: device_index_(device_index)
 		, embedded_audio_(embedded_audio)
 		, key_only_(key_only)
 	{
 	}
 	
-	~bluefish_consumer_proxy()
-	{
-		if(consumer_)
-		{
-			auto str = print();
-			consumer_.reset();
-			CASPAR_LOG(info) << str << L" Successfully Uninitialized.";	
-		}
-	}
-
 	// frame_consumer
 	
-	virtual void initialize(const core::video_format_desc& format_desc, int channel_index) override
+	void initialize(const core::video_format_desc& format_desc, int channel_index) override
 	{
+		consumer_.reset();
 		consumer_.reset(new bluefish_consumer(format_desc, device_index_, embedded_audio_, key_only_, channel_index));
-		audio_cadence_ = format_desc.audio_cadence;
-		CASPAR_LOG(info) << print() << L" Successfully Initialized.";	
 	}
 	
-	virtual boost::unique_future<bool> send(const safe_ptr<core::read_frame>& frame) override
+	boost::unique_future<bool> send(core::const_frame frame) override
 	{
-		CASPAR_VERIFY(audio_cadence_.front() == static_cast<size_t>(frame->audio_data().size()));
-		boost::range::rotate(audio_cadence_, std::begin(audio_cadence_)+1);
-
 		return consumer_->send(frame);
 	}
 		
-	virtual std::wstring print() const override
+	std::wstring print() const override
 	{
 		return consumer_ ? consumer_->print() : L"[bluefish_consumer]";
 	}
 
-	virtual boost::property_tree::wptree info() const override
+	std::wstring name() const override
+	{
+		return L"bluefish";
+	}
+
+	boost::property_tree::wptree info() const override
 	{
 		boost::property_tree::wptree info;
-		info.add(L"type", L"bluefish-consumer");
+		info.add(L"type", L"bluefish");
 		info.add(L"key-only", key_only_);
 		info.add(L"device", device_index_);
 		info.add(L"embedded-audio", embedded_audio_);
 		return info;
 	}
 
-	size_t buffer_depth() const override
+	int buffer_depth() const override
 	{
 		return 1;
 	}
 	
-	virtual int index() const override
+	int index() const override
 	{
 		return 400 + device_index_;
 	}
+
+	void subscribe(const monitor::observable::observer_ptr& o) override
+	{
+	}
+
+	void unsubscribe(const monitor::observable::observer_ptr& o) override
+	{
+	}	
 };	
 
-safe_ptr<core::frame_consumer> create_consumer(const std::vector<std::wstring>& params)
+spl::shared_ptr<core::frame_consumer> create_consumer(const std::vector<std::wstring>& params)
 {
 	if(params.size() < 1 || params[0] != L"BLUEFISH")
 		return core::frame_consumer::empty();
-		
-	const auto device_index = params.size() > 1 ? lexical_cast_or_default<int>(params[1], 1) : 1;
+
+	const auto device_index = params.size() > 1 ? boost::lexical_cast<int>(params[1]) : 1;
 
 	const auto embedded_audio = std::find(params.begin(), params.end(), L"EMBEDDED_AUDIO") != params.end();
 	const auto key_only		  = std::find(params.begin(), params.end(), L"KEY_ONLY")	   != params.end();
 
-	return make_safe<bluefish_consumer_proxy>(device_index, embedded_audio, key_only);
+	return spl::make_shared<bluefish_consumer_proxy>(device_index, embedded_audio, key_only);
 }
 
-safe_ptr<core::frame_consumer> create_consumer(const boost::property_tree::wptree& ptree) 
+spl::shared_ptr<core::frame_consumer> create_consumer(const boost::property_tree::wptree& ptree) 
 {	
 	const auto device_index		= ptree.get(L"device",			1);
 	const auto embedded_audio	= ptree.get(L"embedded-audio",	false);
 	const auto key_only			= ptree.get(L"key-only",		false);
 
-	return make_safe<bluefish_consumer_proxy>(device_index, embedded_audio, key_only);
+	return spl::make_shared<bluefish_consumer_proxy>(device_index, embedded_audio, key_only);
 }
 
 }}

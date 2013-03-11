@@ -25,9 +25,9 @@
 
 #include "../version.h"
 
-#include "exception/exceptions.h"
-#include "log/log.h"
-#include "utility/string.h"
+#include "except.h"
+#include "log.h"
+#include "string.h"
 
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
@@ -38,9 +38,7 @@
 #include <iostream>
 
 namespace caspar { namespace env {
-
-using namespace boost::filesystem2;
-
+	
 std::wstring media;
 std::wstring log;
 std::wstring ftemplate;
@@ -50,37 +48,37 @@ boost::property_tree::wptree pt;
 void check_is_configured()
 {
 	if(pt.empty())
-		BOOST_THROW_EXCEPTION(invalid_operation() << msg_info("Enviroment properties has not been configured"));
+		CASPAR_THROW_EXCEPTION(invalid_operation() << msg_info(L"Enviroment properties has not been configured"));
 }
 
 void configure(const std::wstring& filename)
 {
 	try
 	{
-		auto initialPath = boost::filesystem::initial_path<boost::filesystem2::wpath>().file_string();
+		auto initialPath = boost::filesystem3::initial_path().wstring();
 	
 		std::wifstream file(initialPath + L"\\" + filename);
 		boost::property_tree::read_xml(file, pt, boost::property_tree::xml_parser::trim_whitespace | boost::property_tree::xml_parser::no_comments);
 
-		auto paths = pt.get_child(L"configuration.paths");
-		media = widen(paths.get(L"media-path", initialPath + L"\\media\\"));
-		log = widen(paths.get(L"log-path", initialPath + L"\\log\\"));
-		ftemplate = complete(wpath(widen(paths.get(L"template-path", initialPath + L"\\template\\")))).string();		
-		data = widen(paths.get(L"data-path", initialPath + L"\\data\\"));
+		auto paths	= pt.get_child(L"configuration.paths");
+		media		= paths.get(L"media-path", initialPath + L"\\media\\");
+		log			= paths.get(L"log-path", initialPath + L"\\log\\");
+		ftemplate	= boost::filesystem3::complete(paths.get(L"template-path", initialPath + L"\\template\\")).wstring();		
+		data		= paths.get(L"data-path", initialPath + L"\\data\\");
 
 		try
 		{
-			for(auto it = boost::filesystem2::wdirectory_iterator(initialPath); it != boost::filesystem2::wdirectory_iterator(); ++it)
+			for(auto it = boost::filesystem::directory_iterator(initialPath); it != boost::filesystem::directory_iterator(); ++it)
 			{
-				if(it->filename().find(L".fth") != std::wstring::npos)			
+				if(it->path().wstring().find(L".fth") != std::wstring::npos)			
 				{
 					auto from_path = *it;
-					auto to_path = boost::filesystem2::wpath(ftemplate + L"/" + it->filename());
+					auto to_path = boost::filesystem::path(ftemplate + L"/" + it->path().wstring());
 				
-					if(boost::filesystem2::exists(to_path))
-						boost::filesystem2::remove(to_path);
+					if(boost::filesystem::exists(to_path))
+						boost::filesystem::remove(to_path);
 
-					boost::filesystem2::copy_file(from_path, to_path);
+					boost::filesystem::copy_file(from_path, to_path);
 				}	
 			}
 		}
@@ -92,27 +90,34 @@ void configure(const std::wstring& filename)
 	}
 	catch(...)
 	{
-		std::wcout << L" ### Invalid configuration file. ###";
+		CASPAR_LOG(error) << L" ### Invalid configuration file. ###";
 		throw;
 	}
 
 	try
 	{
-		auto media_path = boost::filesystem::wpath(media);
+		try
+		{
+			auto log_path = boost::filesystem::path(log);
+			if(!boost::filesystem::exists(log_path))
+				boost::filesystem::create_directories(log_path);
+		}
+		catch(...)
+		{
+			log = L"./";
+		}
+
+		auto media_path = boost::filesystem::path(media);
 		if(!boost::filesystem::exists(media_path))
-			boost::filesystem::create_directory(media_path);
-		
-		auto log_path = boost::filesystem::wpath(log);
-		if(!boost::filesystem::exists(log_path))
-			boost::filesystem::create_directory(log_path);
-		
-		auto template_path = boost::filesystem::wpath(ftemplate);
+			boost::filesystem::create_directories(media_path);
+				
+		auto template_path = boost::filesystem::path(ftemplate);
 		if(!boost::filesystem::exists(template_path))
-			boost::filesystem::create_directory(template_path);
+			boost::filesystem::create_directories(template_path);
 		
-		auto data_path = boost::filesystem::wpath(data);
+		auto data_path = boost::filesystem::path(data);
 		if(!boost::filesystem::exists(data_path))
-			boost::filesystem::create_directory(data_path);
+			boost::filesystem::create_directories(data_path);
 	}
 	catch(...)
 	{
@@ -150,7 +155,7 @@ const std::wstring& data_folder()
 
 const std::wstring& version()
 {
-	static std::wstring ver = widen(
+	static std::wstring ver = u16(
 			EXPAND_AND_QUOTE(CASPAR_GEN)	"." 
 			EXPAND_AND_QUOTE(CASPAR_MAYOR)  "." 
 			EXPAND_AND_QUOTE(CASPAR_MINOR)  "." 

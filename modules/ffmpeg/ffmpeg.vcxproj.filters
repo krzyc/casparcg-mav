@@ -30,9 +30,6 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="producer\video\video_decoder.cpp">
-      <Filter>source\producer\video</Filter>
-    </ClCompile>
     <ClCompile Include="producer\audio\audio_decoder.cpp">
       <Filter>source\producer\audio</Filter>
     </ClCompile>
@@ -48,9 +45,6 @@
     </ClCompile>
     <ClCompile Include="producer\filter\parallel_yadif.cpp">
       <Filter>source\producer\filter</Filter>
-    </ClCompile>
-    <ClCompile Include="producer\audio\audio_resampler.cpp">
-      <Filter>source\producer\audio</Filter>
     </ClCompile>
     <ClCompile Include="producer\util\util.cpp">
       <Filter>source\producer\util</Filter>
@@ -70,13 +64,16 @@
     <ClCompile Include="producer\ffmpeg_producer.cpp">
       <Filter>source\producer</Filter>
     </ClCompile>
+    <ClCompile Include="ffmpeg_error.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="producer\video\video_decoder.cpp">
+      <Filter>source\producer\video</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="producer\ffmpeg_producer.h">
       <Filter>source\producer</Filter>
-    </ClInclude>
-    <ClInclude Include="producer\video\video_decoder.h">
-      <Filter>source\producer\video</Filter>
     </ClInclude>
     <ClInclude Include="producer\audio\audio_decoder.h">
       <Filter>source\producer\audio</Filter>
@@ -97,9 +94,6 @@
     <ClInclude Include="producer\filter\parallel_yadif.h">
       <Filter>source\producer\filter</Filter>
     </ClInclude>
-    <ClInclude Include="producer\audio\audio_resampler.h">
-      <Filter>source\producer\audio</Filter>
-    </ClInclude>
     <ClInclude Include="producer\util\flv.h">
       <Filter>source\producer\util</Filter>
     </ClInclude>
@@ -117,6 +111,9 @@
     </ClInclude>
     <ClInclude Include="producer\tbb_avcodec.h">
       <Filter>source\producer</Filter>
+    </ClInclude>
+    <ClInclude Include="producer\video\video_decoder.h">
+      <Filter>source\producer\video</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

@@ -23,61 +23,82 @@
 
 #include "frame_producer.h"
 
-#include <common/memory/safe_ptr.h>
-#include <common/concurrency/target.h>
-#include <common/diagnostics/graph.h>
+#include "../monitor/monitor.h"
 
-#include <boost/noncopyable.hpp>
+#include <common/forward.h>
+#include <common/future_fwd.h>
+#include <common/memory.h>
+#include <common/tweener.h>
+
+#include <boost/optional.hpp>
 #include <boost/property_tree/ptree_fwd.hpp>
-#include <boost/thread/future.hpp>
 
 #include <functional>
+#include <map>
+#include <tuple>
+#include <vector>
+
+FORWARD2(caspar, diagnostics, class graph);
 
 namespace caspar { namespace core {
 
-struct video_format_desc;
-struct frame_transform;
-
-class stage : boost::noncopyable
+typedef reactive::observable<std::map<int, class draw_frame>> frame_observable;
+	
+class stage sealed : public monitor::observable, public frame_observable
 {
-public:
-	typedef std::function<struct frame_transform(struct frame_transform)>							transform_func_t;
-	typedef std::tuple<int, transform_func_t, unsigned int, std::wstring>							transform_tuple_t;
-	typedef target<std::pair<std::map<int, safe_ptr<basic_frame>>, std::shared_ptr<void>>> target_t;
+	stage(const stage&);
+	stage& operator=(const stage&);
+public:	
 
-	explicit stage(const safe_ptr<diagnostics::graph>& graph, const safe_ptr<target_t>& target, const video_format_desc& format_desc);
+	// Static Members
 	
-	// stage
-	
-	void apply_transforms(const std::vector<transform_tuple_t>& transforms);
-	void apply_transform(int index, const transform_func_t& transform, unsigned int mix_duration = 0, const std::wstring& tween = L"linear");
-	void clear_transforms(int index);
-	void clear_transforms();
+	typedef std::function<struct frame_transform(struct frame_transform)> transform_func_t;
+	typedef std::tuple<int, transform_func_t, unsigned int, tweener> transform_tuple_t;
 
-	void spawn_token();
-			
-	void load(int index, const safe_ptr<frame_producer>& producer, bool preview = false, int auto_play_delta = -1);
-	void pause(int index);
-	void play(int index);
-	void stop(int index);
-	void clear(int index);
-	void clear();	
-	void swap_layers(const safe_ptr<stage>& other);
-	void swap_layer(int index, size_t other_index);
-	void swap_layer(int index, size_t other_index, const safe_ptr<stage>& other);
-	
-	boost::unique_future<std::wstring>				call(int index, bool foreground, const std::wstring& param);
-	boost::unique_future<safe_ptr<frame_producer>>	foreground(int index);
-	boost::unique_future<safe_ptr<frame_producer>>	background(int index);
+	// Constructors
 
-	boost::unique_future<boost::property_tree::wptree> info() const;
-	boost::unique_future<boost::property_tree::wptree> info(int layer) const;
+	explicit stage(spl::shared_ptr<diagnostics::graph> graph);
 	
-	void set_video_format_desc(const video_format_desc& format_desc);
+	// Methods
+
+	std::map<int, class draw_frame> operator()(const struct video_format_desc& format_desc);
+
+	boost::unique_future<void>			apply_transforms(const std::vector<transform_tuple_t>& transforms);
+	boost::unique_future<void>			apply_transform(int index, const transform_func_t& transform, unsigned int mix_duration = 0, const tweener& tween = L"linear");
+	boost::unique_future<void>			clear_transforms(int index);
+	boost::unique_future<void>			clear_transforms();				
+	boost::unique_future<void>			load(int index, const spl::shared_ptr<class frame_producer>& producer, bool preview = false, const boost::optional<int32_t>& auto_play_delta = nullptr);
+	boost::unique_future<void>			pause(int index);
+	boost::unique_future<void>			play(int index);
+	boost::unique_future<void>			stop(int index);
+	boost::unique_future<std::wstring>	call(int index, const std::wstring& params);
+	boost::unique_future<void>			clear(int index);
+	boost::unique_future<void>			clear();	
+	boost::unique_future<void>			swap_layers(stage& other);
+	boost::unique_future<void>			swap_layer(int index, int other_index);
+	boost::unique_future<void>			swap_layer(int index, int other_index, stage& other);	
+
+	// monitor::observable
+
+	void subscribe(const monitor::observable::observer_ptr& o) override;
+	void unsubscribe(const monitor::observable::observer_ptr& o) override;
+	
+	// frame_observable
+
+	void subscribe(const frame_observable::observer_ptr& o) override;
+	void unsubscribe(const frame_observable::observer_ptr& o) override;
+
+	// Properties
+
+	boost::unique_future<spl::shared_ptr<class frame_producer>>	foreground(int index);
+	boost::unique_future<spl::shared_ptr<class frame_producer>>	background(int index);
+
+	boost::unique_future<boost::property_tree::wptree>			info() const;
+	boost::unique_future<boost::property_tree::wptree>			info(int index) const;
 
 private:
-	struct implementation;
-	safe_ptr<implementation> impl_;
+	struct impl;
+	spl::shared_ptr<impl> impl_;
 };
 
 }}

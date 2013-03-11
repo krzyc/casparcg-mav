@@ -21,17 +21,14 @@
 
 #pragma once
 
-#define NOMINMAX
-#define WIN32_LEAN_AND_MEAN
-
-#include <windows.h>
+#include "windows.h"
 
 #include <string>
 #include <sstream>
 
 namespace caspar {
 	
-static std::wstring get_cpu_info()
+static std::wstring cpu_info()
 {
 	std::wstring cpu_name = L"Unknown CPU";
 	HKEY hkey; 
@@ -60,7 +57,7 @@ static std::wstring get_cpu_info()
 	return s.str();
 }
 
-static std::wstring get_system_product_name()
+static std::wstring system_product_name()
 {
 	std::wstring system_product_name = L"Unknown System";
 	HKEY hkey; 

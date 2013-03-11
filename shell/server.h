@@ -19,10 +19,11 @@
 * Author: Robert Nagy, ronag89@gmail.com
 */
 
-
 #pragma once
 
-#include <common/memory/safe_ptr.h>
+#include <common/memory.h>
+
+#include <core/monitor/monitor.h>
 
 #include <boost/noncopyable.hpp>
 
@@ -34,14 +35,20 @@ namespace core {
 	class video_channel;
 }
 
-class server : boost::noncopyable
+class server sealed : public monitor::observable
+					, boost::noncopyable
 {
 public:
 	server();
-	const std::vector<safe_ptr<core::video_channel>> get_channels() const;
+	const std::vector<spl::shared_ptr<core::video_channel>> channels() const;
+
+	// monitor::observable
+
+	void subscribe(const monitor::observable::observer_ptr& o) override;
+	void unsubscribe(const monitor::observable::observer_ptr& o) override;
 private:
-	struct implementation;
-	safe_ptr<implementation> impl_;
+	struct impl;
+	spl::shared_ptr<impl> impl_;
 };
 
 }

@@ -34,6 +34,7 @@ namespace caspar { namespace protocol { namespace CLK {
  * @param channel   The channel to play the flash graphics on.
  */
 void add_command_handlers(
-	clk_command_processor& processor, const safe_ptr<core::video_channel>& channel);
+	clk_command_processor& processor, 
+	const spl::shared_ptr<core::video_channel>& channel);
 
 }}}

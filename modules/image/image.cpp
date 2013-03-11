@@ -28,7 +28,7 @@
 #include <core/producer/frame_producer.h>
 #include <core/consumer/frame_consumer.h>
 
-#include <common/utility/string.h>
+#include <common/utf.h>
 
 #include <FreeImage.h>
 
@@ -36,14 +36,24 @@ namespace caspar { namespace image {
 
 void init()
 {
+	FreeImage_Initialise();
 	core::register_producer_factory(create_scroll_producer);
 	core::register_producer_factory(create_producer);
 	core::register_consumer_factory([](const std::vector<std::wstring>& params){return create_consumer(params);});
 }
 
-std::wstring get_version()
+void uninit()
 {
-	return widen(std::string(FreeImage_GetVersion()));
+	FreeImage_DeInitialise();
+	core::register_producer_factory(create_scroll_producer);
+	core::register_producer_factory(create_producer);
+	core::register_consumer_factory([](const std::vector<std::wstring>& params){return create_consumer(params);});
+}
+
+
+std::wstring version()
+{
+	return u16(FreeImage_GetVersion());
 }
 
 }}

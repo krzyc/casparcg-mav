@@ -23,175 +23,199 @@
 
 #include "transition_producer.h"
 
-#include <core/video_format.h>
-
-#include <core/producer/frame/basic_frame.h>
-#include <core/producer/frame/frame_transform.h>
+#include "../frame_producer.h"
+#include "../../frame/draw_frame.h"
+#include "../../frame/frame_transform.h"
+#include "../../monitor/monitor.h"
 
 #include <tbb/parallel_invoke.h>
 
-#include <boost/assign.hpp>
-
-using namespace boost::assign;
-
 namespace caspar { namespace core {	
 
-struct transition_producer : public frame_producer
+class transition_producer : public frame_producer_base
 {	
-	const field_mode::type		mode_;
-	unsigned int				current_frame_;
+	monitor::basic_subject				event_subject_;
+	const field_mode					mode_;
+	int									current_frame_;
 	
-	const transition_info		info_;
-	
-	safe_ptr<frame_producer>	dest_producer_;
-	safe_ptr<frame_producer>	source_producer_;
-
-	safe_ptr<basic_frame>		last_frame_;
+	const transition_info				info_;
 		
-	explicit transition_producer(const field_mode::type& mode, const safe_ptr<frame_producer>& dest, const transition_info& info) 
+	spl::shared_ptr<frame_producer>		dest_producer_;
+	spl::shared_ptr<frame_producer>		source_producer_;
+
+	bool								paused_;
+		
+public:
+	explicit transition_producer(const field_mode& mode, const spl::shared_ptr<frame_producer>& dest, const transition_info& info) 
 		: mode_(mode)
 		, current_frame_(0)
 		, info_(info)
 		, dest_producer_(dest)
 		, source_producer_(frame_producer::empty())
-		, last_frame_(basic_frame::empty()){}
-	
-	// frame_producer
-
-	virtual safe_ptr<frame_producer> get_following_producer() const override
+		, paused_(false)
 	{
-		return dest_producer_;
+		dest->subscribe(event_subject_);
+
+		CASPAR_LOG(info) << print() << L" Initialized";
 	}
 	
-	virtual void set_leading_producer(const safe_ptr<frame_producer>& producer) override
+	// frame_producer
+		
+	void leading_producer(const spl::shared_ptr<frame_producer>& producer) override
 	{
 		source_producer_ = producer;
 	}
 
-	virtual boost::unique_future<std::wstring> call(const std::wstring& params) override
+	draw_frame receive_impl() override
 	{
-		return dest_producer_->call(params);
-	}
+		if(current_frame_ >= info_.duration)
+		{
+			source_producer_ = core::frame_producer::empty();
+			return dest_producer_->receive();		
+		}
 
-	virtual safe_ptr<basic_frame> receive(int hints) override
-	{
-		if(++current_frame_ >= info_.duration)
-			return basic_frame::eof();
-		
-		auto dest = basic_frame::empty();
-		auto source = basic_frame::empty();
+		current_frame_ += 1;
+
+		auto dest = draw_frame::empty();
+		auto source = draw_frame::empty();
 
 		tbb::parallel_invoke(
 		[&]
 		{
-			dest = receive_and_follow(dest_producer_, hints);
-			if(dest == core::basic_frame::late())
+			dest = dest_producer_->receive();
+			if(dest == core::draw_frame::late())
 				dest = dest_producer_->last_frame();
 		},
 		[&]
 		{
-			source = receive_and_follow(source_producer_, hints);
-			if(source == core::basic_frame::late())
+			source = source_producer_->receive();
+			if(source == core::draw_frame::late())
 				source = source_producer_->last_frame();
-		});
+		});			
+						
+		event_subject_	<< monitor::event("transition/frame") % current_frame_ % info_.duration
+						<< monitor::event("transition/type") % [&]() -> std::string
+																{
+																	switch(info_.type.value())
+																	{
+																	case transition_type::mix:		return "mix";
+																	case transition_type::wipe:		return "wipe";
+																	case transition_type::slide:	return "slide";
+																	case transition_type::push:		return "push";
+																	case transition_type::cut:		return "cut";
+																	default:						return "n/a";
+																	}
+																}();
 
 		return compose(dest, source);
 	}
 
-	virtual safe_ptr<core::basic_frame> last_frame() const override
+	draw_frame last_frame() override
 	{
-		return disable_audio(last_frame_);
+		if(current_frame_ >= info_.duration)
+			return dest_producer_->last_frame();
+
+		return frame_producer_base::last_frame();
+	}
+			
+	uint32_t nb_frames() const override
+	{
+		return dest_producer_->nb_frames();
 	}
 
-	virtual uint32_t nb_frames() const override
-	{
-		return get_following_producer()->nb_frames();
-	}
-
-	virtual std::wstring print() const override
+	std::wstring print() const override
 	{
 		return L"transition[" + source_producer_->print() + L"=>" + dest_producer_->print() + L"]";
+	}
+
+	std::wstring name() const override
+	{
+		return L"transition";
 	}
 	
 	boost::property_tree::wptree info() const override
 	{
-		boost::property_tree::wptree info;
-		info.add(L"type", L"transition-producer");
-		info.add_child(L"source.producer",	   source_producer_->info());
-		info.add_child(L"destination.producer", dest_producer_->info());
-		return info;
+		return dest_producer_->info();
+	}
+	
+	boost::unique_future<std::wstring> call(const std::wstring& str) override
+	{
+		return dest_producer_->call(str);
 	}
 
 	// transition_producer
 						
-	safe_ptr<basic_frame> compose(const safe_ptr<basic_frame>& dest_frame, const safe_ptr<basic_frame>& src_frame) 
+	draw_frame compose(draw_frame dest_frame, draw_frame src_frame) const
 	{	
-		if(info_.type == transition::cut)		
+		if(info_.type == transition_type::cut)		
 			return src_frame;
 										
-		const double delta1 = info_.tweener(current_frame_*2-1, 0.0, 1.0, info_.duration*2);
-		const double delta2 = info_.tweener(current_frame_*2, 0.0, 1.0, info_.duration*2);  
+		const double delta1 = info_.tweener(current_frame_*2-1, 0.0, 1.0, static_cast<double>(info_.duration*2));
+		const double delta2 = info_.tweener(current_frame_*2,   0.0, 1.0, static_cast<double>(info_.duration*2));  
 
 		const double dir = info_.direction == transition_direction::from_left ? 1.0 : -1.0;		
 		
 		// For interlaced transitions. Seperate fields into seperate frames which are transitioned accordingly.
 		
-		auto s_frame1 = make_safe<basic_frame>(src_frame);
-		auto s_frame2 = make_safe<basic_frame>(src_frame);
-
-		s_frame1->get_frame_transform().volume = 0.0;
-		s_frame2->get_frame_transform().volume = 1.0-delta2;
-
-		auto d_frame1 = make_safe<basic_frame>(dest_frame);
-		auto d_frame2 = make_safe<basic_frame>(dest_frame);
+		src_frame.transform().audio_transform.volume = 1.0-delta2;
+		auto s_frame1 = src_frame;
+		auto s_frame2 = src_frame;
 		
-		d_frame1->get_frame_transform().volume = 0.0;
-		d_frame2->get_frame_transform().volume = delta2;
+		dest_frame.transform().audio_transform.volume = delta2;
+		auto d_frame1 = dest_frame;
+		auto d_frame2 = dest_frame;
+		
+		if(info_.type == transition_type::mix)
+		{
+			d_frame1.transform().image_transform.opacity = delta1;	
+			d_frame1.transform().image_transform.is_mix = true;
+			d_frame2.transform().image_transform.opacity = delta2;
+			d_frame2.transform().image_transform.is_mix = true;
 
-		if(info_.type == transition::mix)
+			s_frame1.transform().image_transform.opacity = 1.0-delta1;	
+			s_frame1.transform().image_transform.is_mix = true;
+			s_frame2.transform().image_transform.opacity = 1.0-delta2;	
+			s_frame2.transform().image_transform.is_mix = true;
+		}
+		if(info_.type == transition_type::slide)
 		{
-			d_frame1->get_frame_transform().opacity = delta1;	
-			d_frame1->get_frame_transform().is_mix = true;
-			d_frame2->get_frame_transform().opacity = delta2;
-			d_frame2->get_frame_transform().is_mix = true;
+			d_frame1.transform().image_transform.fill_translation[0] = (-1.0+delta1)*dir;	
+			d_frame2.transform().image_transform.fill_translation[0] = (-1.0+delta2)*dir;		
+		}
+		else if(info_.type == transition_type::push)
+		{
+			d_frame1.transform().image_transform.fill_translation[0] = (-1.0+delta1)*dir;
+			d_frame2.transform().image_transform.fill_translation[0] = (-1.0+delta2)*dir;
 
-			s_frame1->get_frame_transform().opacity = 1.0-delta1;	
-			s_frame1->get_frame_transform().is_mix = true;
-			s_frame2->get_frame_transform().opacity = 1.0-delta2;	
-			s_frame2->get_frame_transform().is_mix = true;
+			s_frame1.transform().image_transform.fill_translation[0] = (0.0+delta1)*dir;	
+			s_frame2.transform().image_transform.fill_translation[0] = (0.0+delta2)*dir;		
 		}
-		if(info_.type == transition::slide)
+		else if(info_.type == transition_type::wipe)		
 		{
-			d_frame1->get_frame_transform().fill_translation[0] = (-1.0+delta1)*dir;	
-			d_frame2->get_frame_transform().fill_translation[0] = (-1.0+delta2)*dir;		
-		}
-		else if(info_.type == transition::push)
-		{
-			d_frame1->get_frame_transform().fill_translation[0] = (-1.0+delta1)*dir;
-			d_frame2->get_frame_transform().fill_translation[0] = (-1.0+delta2)*dir;
-
-			s_frame1->get_frame_transform().fill_translation[0] = (0.0+delta1)*dir;	
-			s_frame2->get_frame_transform().fill_translation[0] = (0.0+delta2)*dir;		
-		}
-		else if(info_.type == transition::wipe)		
-		{
-			d_frame1->get_frame_transform().clip_scale[0] = delta1;	
-			d_frame2->get_frame_transform().clip_scale[0] = delta2;			
+			d_frame1.transform().image_transform.clip_scale[0] = delta1;	
+			d_frame2.transform().image_transform.clip_scale[0] = delta2;			
 		}
 				
-		const auto s_frame = s_frame1->get_frame_transform() == s_frame2->get_frame_transform() ? s_frame2 : basic_frame::interlace(s_frame1, s_frame2, mode_);
-		const auto d_frame = d_frame1->get_frame_transform() == d_frame2->get_frame_transform() ? d_frame2 : basic_frame::interlace(d_frame1, d_frame2, mode_);
+		const auto s_frame = s_frame1.transform() == s_frame2.transform() ? s_frame2 : draw_frame::interlace(s_frame1, s_frame2, mode_);
+		const auto d_frame = d_frame1.transform() == d_frame2.transform() ? d_frame2 : draw_frame::interlace(d_frame1, d_frame2, mode_);
 		
-		last_frame_ = basic_frame::combine(s_frame2, d_frame2);
+		return draw_frame::over(s_frame, d_frame);
+	}
 
-		return basic_frame::combine(s_frame, d_frame);
+	void subscribe(const monitor::observable::observer_ptr& o) override															
+	{
+		event_subject_.subscribe(o);
+	}
+
+	void unsubscribe(const monitor::observable::observer_ptr& o) override		
+	{
+		event_subject_.unsubscribe(o);
 	}
 };
 
-safe_ptr<frame_producer> create_transition_producer(const field_mode::type& mode, const safe_ptr<frame_producer>& destination, const transition_info& info)
+spl::shared_ptr<frame_producer> create_transition_producer(const field_mode& mode, const spl::shared_ptr<frame_producer>& destination, const transition_info& info)
 {
-	return create_producer_print_proxy(
-			make_safe<transition_producer>(mode, destination, info));
+	return spl::make_shared<transition_producer>(mode, destination, info);
 }
 
 }}

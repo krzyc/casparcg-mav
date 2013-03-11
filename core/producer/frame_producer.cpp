@@ -22,210 +22,210 @@
 #include "../StdAfx.h"
 
 #include "frame_producer.h"
-#include "frame/basic_frame.h"
-#include "frame/frame_transform.h"
+
+#include "../frame/draw_frame.h"
+#include "../frame/frame_transform.h"
 
 #include "color/color_producer.h"
-#include "playlist/playlist_producer.h"
 #include "separated/separated_producer.h"
 
-#include <common/memory/safe_ptr.h>
-#include <common/concurrency/executor.h>
-#include <common/exception/exceptions.h>
-#include <common/utility/move_on_copy.h>
+#include <common/assert.h>
+#include <common/except.h>
+#include <common/executor.h>
+#include <common/future.h>
+#include <common/memory.h>
+
+#include <boost/thread.hpp>
 
 namespace caspar { namespace core {
 	
 std::vector<const producer_factory_t> g_factories;
-	
-class destroy_producer_proxy : public frame_producer
-{	
-	std::unique_ptr<std::shared_ptr<frame_producer>> producer_;
-public:
-	destroy_producer_proxy(safe_ptr<frame_producer>&& producer) 
-		: producer_(new std::shared_ptr<frame_producer>(std::move(producer)))
-	{
-	}
-
-	~destroy_producer_proxy()
-	{		
-		static auto destroyers = std::make_shared<tbb::concurrent_bounded_queue<std::shared_ptr<executor>>>();
-		static tbb::atomic<int> destroyer_count;
-
-		try
-		{
-			std::shared_ptr<executor> destroyer;
-			if(!destroyers->try_pop(destroyer))
-			{
-				destroyer.reset(new executor(L"destroyer"));
-				destroyer->set_priority_class(below_normal_priority_class);
-				if(++destroyer_count > 16)
-					CASPAR_LOG(warning) << L"Potential destroyer dead-lock detected.";
-				CASPAR_LOG(trace) << "Created destroyer: " << destroyer_count;
-			}
-				
-			auto producer = producer_.release();
-			auto pool	  = destroyers;
-			destroyer->begin_invoke([=]
-			{
-				std::unique_ptr<std::shared_ptr<frame_producer>> producer2(producer);
-
-				auto str = (*producer2)->print();
-				try
-				{
-					if(!producer->unique())
-						CASPAR_LOG(trace) << str << L" Not destroyed on asynchronous destruction thread: " << producer->use_count();
-					else
-						CASPAR_LOG(trace) << str << L" Destroying on asynchronous destruction thread.";
-				}
-				catch(...){}
-								
-				producer2.reset();
-				pool->push(destroyer);
-			}); 
-		}
-		catch(...)
-		{
-			CASPAR_LOG_CURRENT_EXCEPTION();
-			try
-			{
-				producer_.reset();
-			}
-			catch(...){}
-		}
-	}
-
-	virtual safe_ptr<basic_frame>								receive(int hints) override												{return (*producer_)->receive(hints);}
-	virtual safe_ptr<basic_frame>								last_frame() const override		 										{return (*producer_)->last_frame();}
-	virtual std::wstring										print() const override													{return (*producer_)->print();}
-	virtual boost::property_tree::wptree 						info() const override													{return (*producer_)->info();}
-	virtual boost::unique_future<std::wstring>					call(const std::wstring& str) override									{return (*producer_)->call(str);}
-	virtual safe_ptr<frame_producer>							get_following_producer() const override									{return (*producer_)->get_following_producer();}
-	virtual void												set_leading_producer(const safe_ptr<frame_producer>& producer) override	{(*producer_)->set_leading_producer(producer);}
-	virtual uint32_t											nb_frames() const override												{return (*producer_)->nb_frames();}
-};
-
-safe_ptr<core::frame_producer> create_producer_destroy_proxy(safe_ptr<core::frame_producer> producer)
-{
-	return make_safe<destroy_producer_proxy>(std::move(producer));
-}
-
-class print_producer_proxy : public frame_producer
-{	
-	std::shared_ptr<frame_producer> producer_;
-public:
-	print_producer_proxy(safe_ptr<frame_producer>&& producer) 
-		: producer_(std::move(producer))
-	{
-		CASPAR_LOG(info) << producer_->print() << L" Initialized.";
-	}
-
-	~print_producer_proxy()
-	{		
-		auto str = producer_->print();
-		CASPAR_LOG(trace) << str << L" Uninitializing.";
-		producer_.reset();
-		CASPAR_LOG(info) << str << L" Uninitialized.";
-	}
-
-	virtual safe_ptr<basic_frame>								receive(int hints) override												{return (producer_)->receive(hints);}
-	virtual safe_ptr<basic_frame>								last_frame() const override		 										{return (producer_)->last_frame();}
-	virtual std::wstring										print() const override													{return (producer_)->print();}
-	virtual boost::property_tree::wptree 						info() const override													{return (producer_)->info();}
-	virtual boost::unique_future<std::wstring>					call(const std::wstring& str) override									{return (producer_)->call(str);}
-	virtual safe_ptr<frame_producer>							get_following_producer() const override									{return (producer_)->get_following_producer();}
-	virtual void												set_leading_producer(const safe_ptr<frame_producer>& producer) override	{(producer_)->set_leading_producer(producer);}
-	virtual uint32_t											nb_frames() const override												{return (producer_)->nb_frames();}
-};
-
-safe_ptr<core::frame_producer> create_producer_print_proxy(safe_ptr<core::frame_producer> producer)
-{
-	return make_safe<print_producer_proxy>(std::move(producer));
-}
-
-class last_frame_producer : public frame_producer
-{
-	const std::wstring			print_;
-	const safe_ptr<basic_frame>	frame_;
-	const uint32_t				nb_frames_;
-public:
-	last_frame_producer(const safe_ptr<frame_producer>& producer) 
-		: print_(producer->print())
-		, frame_(producer->last_frame() != basic_frame::eof() ? producer->last_frame() : basic_frame::empty())
-		, nb_frames_(producer->nb_frames())
-	{
-	}
-	
-	virtual safe_ptr<basic_frame> receive(int){return frame_;}
-	virtual safe_ptr<core::basic_frame> last_frame() const{return frame_;}
-	virtual std::wstring print() const{return L"dummy[" + print_ + L"]";}
-	virtual uint32_t nb_frames() const {return nb_frames_;}	
-	virtual boost::property_tree::wptree info() const override
-	{
-		boost::property_tree::wptree info;
-		info.add(L"type", L"last-frame-producer");
-		return info;
-	}
-};
-
-struct empty_frame_producer : public frame_producer
-{
-	virtual safe_ptr<basic_frame> receive(int){return basic_frame::empty();}
-	virtual safe_ptr<basic_frame> last_frame() const{return basic_frame::empty();}
-	virtual void set_frame_factory(const safe_ptr<frame_factory>&){}
-	virtual uint32_t nb_frames() const {return 0;}
-	virtual std::wstring print() const { return L"empty";}
-	
-	virtual boost::property_tree::wptree info() const override
-	{
-		boost::property_tree::wptree info;
-		info.add(L"type", L"empty-producer");
-		return info;
-	}
-};
-
-const safe_ptr<frame_producer>& frame_producer::empty() // nothrow
-{
-	static safe_ptr<frame_producer> producer = make_safe<empty_frame_producer>();
-	return producer;
-}	
-
-safe_ptr<basic_frame> receive_and_follow(safe_ptr<frame_producer>& producer, int hints)
-{	
-	auto frame = producer->receive(hints);
-	if(frame == basic_frame::eof())
-	{
-		CASPAR_LOG(info) << producer->print() << " End Of File.";
-		auto following = producer->get_following_producer();
-		if(following != frame_producer::empty())
-		{
-			following->set_leading_producer(producer);
-			producer = std::move(following);
-		}
-		else
-			producer = make_safe<last_frame_producer>(producer);
-
-		return receive_and_follow(producer, hints);
-	}
-	return frame;
-}
 
 void register_producer_factory(const producer_factory_t& factory)
 {
 	g_factories.push_back(factory);
 }
 
-safe_ptr<core::frame_producer> do_create_producer(const safe_ptr<frame_factory>& my_frame_factory, const std::vector<std::wstring>& params)
+struct frame_producer_base::impl
+{
+	tbb::atomic<uint32_t>	frame_number_;
+	tbb::atomic<bool>		paused_;
+	frame_producer_base&	self_;
+	draw_frame				last_frame_;
+
+	impl(frame_producer_base& self)
+		: self_(self)
+		, last_frame_(draw_frame::empty())
+	{
+		frame_number_ = 0;
+		paused_ = false;
+	}
+	
+	draw_frame receive()
+	{
+		if(paused_)
+			return self_.last_frame();
+
+		auto frame = self_.receive_impl();
+		if(frame == draw_frame::late())
+			return self_.last_frame();
+
+		++frame_number_;
+
+		return last_frame_ = draw_frame::push(frame);
+	}
+
+	void paused(bool value)
+	{
+		paused_ = value;
+	}
+
+	draw_frame last_frame()
+	{
+		return draw_frame::still(last_frame_);
+	}
+};
+
+frame_producer_base::frame_producer_base() : impl_(new impl(*this))
+{
+}
+
+draw_frame frame_producer_base::receive()
+{
+	return impl_->receive();
+}
+
+void frame_producer_base::paused(bool value)
+{
+	impl_->paused(value);
+}
+
+draw_frame frame_producer_base::last_frame()
+{
+	return impl_->last_frame();
+}
+
+boost::unique_future<std::wstring> frame_producer_base::call(const std::wstring&) 
+{
+	CASPAR_THROW_EXCEPTION(not_supported());
+}
+
+uint32_t frame_producer_base::nb_frames() const
+{
+	return std::numeric_limits<uint32_t>::max();
+}
+
+uint32_t frame_producer_base::frame_number() const
+{
+	return impl_->frame_number_;
+}
+
+const spl::shared_ptr<frame_producer>& frame_producer::empty() 
+{
+	class empty_frame_producer : public frame_producer
+	{
+	public:
+		empty_frame_producer(){}
+		draw_frame receive() override{return draw_frame::empty();}
+		void paused(bool value) override{}
+		uint32_t nb_frames() const override {return 0;}
+		std::wstring print() const override { return L"empty";}
+		void subscribe(const monitor::observable::observer_ptr& o) override{}
+		void unsubscribe(const monitor::observable::observer_ptr& o) override{}	
+		std::wstring name() const override {return L"empty";}
+		uint32_t frame_number() const override {return 0;}
+		boost::unique_future<std::wstring> call(const std::wstring& params) override{CASPAR_THROW_EXCEPTION(not_supported());}
+		draw_frame last_frame() {return draw_frame::empty();}
+	
+		boost::property_tree::wptree info() const override
+		{
+			boost::property_tree::wptree info;
+			info.add(L"type", L"empty-producer");
+			return info;
+		}
+	};
+
+	static spl::shared_ptr<frame_producer> producer = spl::make_shared<empty_frame_producer>();
+	return producer;
+}	
+
+class destroy_producer_proxy : public frame_producer
+{	
+	std::shared_ptr<frame_producer> producer_;
+public:
+	destroy_producer_proxy(spl::shared_ptr<frame_producer>&& producer) 
+		: producer_(std::move(producer))
+	{
+	}
+
+	virtual ~destroy_producer_proxy()
+	{		
+		static tbb::atomic<int> counter = tbb::atomic<int>();
+		
+		if(producer_ == core::frame_producer::empty())
+			return;
+
+		++counter;
+		CASPAR_VERIFY(counter < 8);
+		
+		auto producer = new spl::shared_ptr<frame_producer>(std::move(producer_));
+		boost::thread([=]
+		{
+			std::unique_ptr<spl::shared_ptr<frame_producer>> pointer_guard(producer);
+			auto str = (*producer)->print();
+			try
+			{
+				if(!producer->unique())
+					CASPAR_LOG(trace) << str << L" Not destroyed on asynchronous destruction thread: " << producer->use_count();
+				else
+					CASPAR_LOG(trace) << str << L" Destroying on asynchronous destruction thread.";
+			}
+			catch(...){}
+			
+			try
+			{
+				pointer_guard.reset();
+				CASPAR_LOG(info) << str << L" Destroyed.";
+			}
+			catch(...)
+			{
+				CASPAR_LOG_CURRENT_EXCEPTION();
+			}
+
+			--counter;
+		}).detach(); 
+	}
+	
+	draw_frame	receive() override																										{return producer_->receive();}
+	std::wstring										print() const override															{return producer_->print();}
+	void												paused(bool value) override														{producer_->paused(value);}
+	std::wstring										name() const override															{return producer_->name();}
+	uint32_t											frame_number() const override													{return producer_->frame_number();}
+	boost::property_tree::wptree 						info() const override															{return producer_->info();}
+	boost::unique_future<std::wstring>					call(const std::wstring& str) override											{return producer_->call(str);}
+	void												leading_producer(const spl::shared_ptr<frame_producer>& producer) override		{return producer_->leading_producer(producer);}
+	uint32_t											nb_frames() const override														{return producer_->nb_frames();}
+	class draw_frame									last_frame()																{return producer_->last_frame();}
+	void												subscribe(const monitor::observable::observer_ptr& o)							{return producer_->subscribe(o);}
+	void												unsubscribe(const monitor::observable::observer_ptr& o)							{return producer_->unsubscribe(o);}
+};
+
+spl::shared_ptr<core::frame_producer> create_destroy_proxy(spl::shared_ptr<core::frame_producer> producer)
+{
+	return spl::make_shared<destroy_producer_proxy>(std::move(producer));
+}
+
+spl::shared_ptr<core::frame_producer> do_create_producer(const spl::shared_ptr<frame_factory>& my_frame_factory, const video_format_desc& format_desc, const std::vector<std::wstring>& params)
 {
 	if(params.empty())
-		BOOST_THROW_EXCEPTION(invalid_argument() << arg_name_info("params") << arg_value_info(""));
+		CASPAR_THROW_EXCEPTION(invalid_argument() << arg_name_info("params") << arg_value_info(""));
 	
 	auto producer = frame_producer::empty();
 	std::any_of(g_factories.begin(), g_factories.end(), [&](const producer_factory_t& factory) -> bool
 		{
 			try
 			{
-				producer = factory(my_frame_factory, params);
+				producer = factory(my_frame_factory, format_desc, params);
 			}
 			catch(...)
 			{
@@ -236,17 +236,16 @@ safe_ptr<core::frame_producer> do_create_producer(const safe_ptr<frame_factory>&
 
 	if(producer == frame_producer::empty())
 		producer = create_color_producer(my_frame_factory, params);
-	
+
 	if(producer == frame_producer::empty())
-		producer = create_playlist_producer(my_frame_factory, params);
-	
+		return producer;
+		
 	return producer;
 }
 
-
-safe_ptr<core::frame_producer> create_producer(const safe_ptr<frame_factory>& my_frame_factory, const std::vector<std::wstring>& params)
+spl::shared_ptr<core::frame_producer> create_producer(const spl::shared_ptr<frame_factory>& my_frame_factory, const video_format_desc& format_desc, const std::vector<std::wstring>& params)
 {	
-	auto producer = do_create_producer(my_frame_factory, params);
+	auto producer = do_create_producer(my_frame_factory, format_desc, params);
 	auto key_producer = frame_producer::empty();
 	
 	try // to find a key file.
@@ -255,11 +254,11 @@ safe_ptr<core::frame_producer> create_producer(const safe_ptr<frame_factory>& my
 		if(params_copy.size() > 0)
 		{
 			params_copy[0] += L"_A";
-			key_producer = do_create_producer(my_frame_factory, params_copy);			
+			key_producer = do_create_producer(my_frame_factory, format_desc, params_copy);			
 			if(key_producer == frame_producer::empty())
 			{
 				params_copy[0] += L"LPHA";
-				key_producer = do_create_producer(my_frame_factory, params_copy);	
+				key_producer = do_create_producer(my_frame_factory, format_desc, params_copy);	
 			}
 		}
 	}
@@ -273,20 +272,20 @@ safe_ptr<core::frame_producer> create_producer(const safe_ptr<frame_factory>& my
 		std::wstring str;
 		BOOST_FOREACH(auto& param, params)
 			str += param + L" ";
-		BOOST_THROW_EXCEPTION(file_not_found() << msg_info("No match found for supplied commands. Check syntax.") << arg_value_info(narrow(str)));
+		CASPAR_THROW_EXCEPTION(file_not_found() << msg_info("No match found for supplied commands. Check syntax.") << arg_value_info(u8(str)));
 	}
 
 	return producer;
 }
 
 
-safe_ptr<core::frame_producer> create_producer(const safe_ptr<frame_factory>& factory, const std::wstring& params)
+spl::shared_ptr<core::frame_producer> create_producer(const spl::shared_ptr<frame_factory>& factory, const video_format_desc& format_desc, const std::wstring& params)
 {
 	std::wstringstream iss(params);
 	std::vector<std::wstring> tokens;
 	typedef std::istream_iterator<std::wstring, wchar_t, std::char_traits<wchar_t> > iterator;
 	std::copy(iterator(iss),  iterator(), std::back_inserter(tokens));
-	return create_producer(factory, tokens);
+	return create_producer(factory, format_desc, tokens);
 }
 
 }}

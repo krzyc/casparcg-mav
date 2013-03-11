@@ -21,50 +21,62 @@
 
 #pragma once
 
-#include <common/memory/safe_ptr.h>
+#include "frame_producer.h"
 
-#include <boost/noncopyable.hpp>
-#include <boost/thread/future.hpp>
+#include "../monitor/monitor.h"
+
+#include <common/forward.h>
+#include <common/future_fwd.h>
+#include <common/memory.h>
+
 #include <boost/property_tree/ptree_fwd.hpp>
 
 #include <string>
 
+FORWARD1(boost, template<typename T> class optional);
+
 namespace caspar { namespace core {
-
-struct frame_producer;
-class basic_frame;
-
-class layer : boost::noncopyable
+	
+class layer sealed : public monitor::observable
 {
-public:
-	layer(); // nothrow
-	layer(layer&& other); // nothrow
-	layer& operator=(layer&& other); // nothrow
 	layer(const layer&);
 	layer& operator=(const layer&);
+public:
+	// Static Members
 
-	void swap(layer& other); // nothrow 
+	// Constructors
+
+	explicit layer(int index = -1); 
+	layer(layer&& other); 
+
+	// Methods
+
+	layer& operator=(layer&& other); 
+
+	void swap(layer& other);  
 		
-	void load(const safe_ptr<frame_producer>& producer, bool preview, int auto_play_delta); // nothrow
-	void play(); // nothrow
-	void pause(); // nothrow
-	void stop(); // nothrow
-	boost::unique_future<std::wstring> call(bool foreground, const std::wstring& param);
-
-	bool is_paused() const;
-	int64_t frame_number() const;
+	void load(spl::shared_ptr<class frame_producer> producer, bool preview, const boost::optional<int32_t>& auto_play_delta = nullptr); 
+	void play(); 
+	void pause(); 
+	void stop(); 
 	
-	bool empty() const;
+	class draw_frame receive(const struct video_format_desc& format_desc); 
+	
+	// monitor::observable
 
-	safe_ptr<frame_producer> foreground() const; // nothrow
-	safe_ptr<frame_producer> background() const; // nothrow
+	void subscribe(const monitor::observable::observer_ptr& o) override;
+	void unsubscribe(const monitor::observable::observer_ptr& o) override;
 
-	safe_ptr<basic_frame> receive(int hints); // nothrow
+	// Properties
+		
+	spl::shared_ptr<class frame_producer>	foreground() const; 
+	spl::shared_ptr<class frame_producer>	background() const; 
 
-	boost::property_tree::wptree info() const;
+	boost::property_tree::wptree			info() const;
+
 private:
-	struct implementation;
-	safe_ptr<implementation> impl_;
+	struct impl;
+	spl::shared_ptr<impl> impl_;
 };
 
 }}

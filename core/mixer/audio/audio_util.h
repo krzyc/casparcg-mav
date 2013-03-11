@@ -23,15 +23,14 @@
 
 #include <algorithm>
 #include <vector>
-
-#include <stdint.h>
+#include <cstdint>
 
 #include <tbb/cache_aligned_allocator.h>
 
 namespace caspar { namespace core {
 	
 template<typename T>
-static std::vector<int8_t, tbb::cache_aligned_allocator<int8_t>> audio_32_to_24(const T& audio_data)
+std::vector<int8_t, tbb::cache_aligned_allocator<int8_t>> audio_32_to_24(const T& audio_data)
 {	
 	auto size		 = std::distance(std::begin(audio_data), std::end(audio_data));
 	auto input8		 = reinterpret_cast<const int8_t*>(&(*std::begin(audio_data)));
@@ -49,7 +48,7 @@ static std::vector<int8_t, tbb::cache_aligned_allocator<int8_t>> audio_32_to_24(
 }
 
 template<typename T>
-static std::vector<int16_t, tbb::cache_aligned_allocator<int16_t>> audio_32_to_16(const T& audio_data)
+std::vector<int16_t, tbb::cache_aligned_allocator<int16_t>> audio_32_to_16(const T& audio_data)
 {	
 	auto size		 = std::distance(std::begin(audio_data), std::end(audio_data));
 	auto input32	 = &(*std::begin(audio_data));

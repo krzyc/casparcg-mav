@@ -28,12 +28,15 @@
 #include "CIICommandsImpl.h"
 #include <sstream>
 #include <algorithm>
-#include <modules/flash/producer/cg_producer.h>
+#include <modules/flash/producer/cg_proxy.h>
 #include <boost/locale.hpp>
+#include <boost/algorithm/string/trim.hpp>
+#include <boost/algorithm/string/split.hpp>
+#include <boost/lexical_cast.hpp>
 
 namespace caspar { namespace protocol { namespace cii {
 
-/////////////////
+////////
 // MediaCommand
 void MediaCommand::Setup(const std::vector<std::wstring>& parameters) 
 {
@@ -46,7 +49,7 @@ void MediaCommand::Execute()
 }
 
 
-/////////////////
+////////
 // WriteCommand
 void WriteCommand::Setup(const std::vector<std::wstring>& parameters)
 {
@@ -79,7 +82,7 @@ void WriteCommand::Execute()
 }
 
 
-//////////////////////
+//////////
 // ImagestoreCommand
 void ImagestoreCommand::Setup(const std::vector<std::wstring>& parameters) 
 {
@@ -93,7 +96,7 @@ void ImagestoreCommand::Execute()
 }
 
 
-//////////////////////
+//////////
 // MiscellaneousCommand
 void MiscellaneousCommand::Setup(const std::vector<std::wstring>& parameters)
 {
@@ -138,7 +141,7 @@ void MiscellaneousCommand::Setup(const std::vector<std::wstring>& parameters)
 		std::wstring value = parameters[3];
 		std::transform(value.begin(), value.end(), value.begin(), toupper);
 
-		this->pCIIStrategy_->GetChannel()->set_video_format_desc(core::video_format_desc::get(value));
+		this->pCIIStrategy_->GetChannel()->video_format_desc(core::video_format_desc(value));
 	}
 }
 
@@ -152,12 +155,12 @@ void MiscellaneousCommand::Execute()
 	{
 		// HACK fix. The data sent is UTF8, however the protocol is implemented for ISO-8859-1. Instead of doing risky changes we simply convert into proper encoding when leaving protocol code.
 		auto xmlData2 = boost::locale::conv::utf_to_utf<wchar_t, char>(std::string(xmlData_.begin(), xmlData_.end()));
-		flash::get_default_cg_producer(pCIIStrategy_->GetChannel())->add(layer_, filename_, false, TEXT(""), xmlData2);
+		flash::create_cg_proxy(pCIIStrategy_->GetChannel()).add(layer_, filename_, false, TEXT(""), xmlData2);
 	}
 }
 
 
-///////////////////
+/////////
 // KeydataCommand
 void KeydataCommand::Execute() 
 {
@@ -167,11 +170,11 @@ void KeydataCommand::Execute()
 
 	//TODO: Need to be checked for validity
 	else if(state_ == 1)
-		flash::get_default_cg_producer(pCIIStrategy_->GetChannel())->stop(layer_, 0);
+		flash::create_cg_proxy(pCIIStrategy_->GetChannel(), casparLayer_).stop(layer_, 0);
 	else if(state_ == 2)
-		pCIIStrategy_->GetChannel()->stage()->clear(flash::cg_producer::DEFAULT_LAYER);
+		pCIIStrategy_->GetChannel()->stage().clear();
 	else if(state_ == 3)
-		flash::get_default_cg_producer(pCIIStrategy_->GetChannel())->play(layer_);
+		flash::create_cg_proxy(pCIIStrategy_->GetChannel(), casparLayer_).play(layer_);
 }
 
 void KeydataCommand::Setup(const std::vector<std::wstring>& parameters) {
@@ -191,8 +194,29 @@ void KeydataCommand::Setup(const std::vector<std::wstring>& parameters) {
 		state_ = 0;
 	}
 
-	if(parameters.size() > 2)	
-		layer_ = _ttoi(parameters[2].c_str());	
+	casparLayer_ = flash::cg_proxy::DEFAULT_LAYER;
+	if(parameters.size() > 2)
+	{
+		//The layer parameter now supports casparlayers.
+		//the format is [CasparLayer]-[FlashLayer]
+		std::wstring str = boost::trim_copy(parameters[2]);
+		std::vector<std::wstring> split;
+		boost::split(split, str, boost::is_any_of("-"));
+		
+		try
+		{
+			casparLayer_ = boost::lexical_cast<int>(split[0]);
+
+			if(split.size() > 1)
+				layer_ = boost::lexical_cast<int>(split[1]);
+		}
+		catch(...)
+		{ 
+			casparLayer_ = flash::cg_proxy::DEFAULT_LAYER;
+			layer_ = 0;
+		}
+	}
+
 
 	if(parameters[1].at(0) == 27)	//NEPTUNE:	Y\<27>\X			Stop layer X.
 		state_ = 1;

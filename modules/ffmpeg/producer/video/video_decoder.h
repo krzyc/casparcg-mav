@@ -21,7 +21,10 @@
 
 #pragma once
 
-#include <common/memory/safe_ptr.h>
+#include <common/memory.h>
+#include <common/forward.h>
+
+#include <core/monitor/monitor.h>
 
 #include <boost/noncopyable.hpp>
 
@@ -29,37 +32,36 @@ struct AVFormatContext;
 struct AVFrame;
 struct AVPacket;
 
-namespace caspar {
+namespace caspar { namespace ffmpeg {
 
-namespace core {
-	struct frame_factory;
-	class write_frame;
-}
-
-namespace ffmpeg {
-
-class video_decoder : boost::noncopyable
+class video_decoder : public monitor::observable
+					, boost::noncopyable
 {
 public:
-	explicit video_decoder(const safe_ptr<AVFormatContext>& context);
+	explicit video_decoder(class input& input);
 	
-	bool ready() const;
-	void push(const std::shared_ptr<AVPacket>& packet);
-	std::shared_ptr<AVFrame> poll();
-	
-	size_t	 width()		const;
-	size_t	 height()	const;
+	video_decoder(video_decoder&& other);
+	video_decoder& operator=(video_decoder&& other);
 
-	uint32_t nb_frames() const;
+	std::shared_ptr<AVFrame> operator()();
+	
+	int	 width() const;
+	int	 height() const;
+	bool is_progressive() const;
 	uint32_t file_frame_number() const;
 
-	bool	 is_progressive() const;
+	uint32_t nb_frames() const;
 
 	std::wstring print() const;
+		
+	// monitor::observable
+	
+	void subscribe(const monitor::observable::observer_ptr& o) override;
+	void unsubscribe(const monitor::observable::observer_ptr& o) override;
 
 private:
-	struct implementation;
-	safe_ptr<implementation> impl_;
+	struct impl;
+	spl::shared_ptr<impl> impl_;
 };
 
 }}

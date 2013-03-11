@@ -45,7 +45,7 @@ using namespace core;
 const std::wstring CIIProtocolStrategy::MessageDelimiter = TEXT("\r\n");
 const TCHAR CIIProtocolStrategy::TokenDelimiter = TEXT('\\');
 
-CIIProtocolStrategy::CIIProtocolStrategy(const std::vector<safe_ptr<core::video_channel>>& channels) : pChannel_(channels.at(0)), executor_(L"CIIProtocolStrategy")
+CIIProtocolStrategy::CIIProtocolStrategy(const std::vector<spl::shared_ptr<core::video_channel>>& channels) : pChannel_(channels.at(0)), executor_(L"CIIProtocolStrategy")
 {
 }
 
@@ -184,7 +184,7 @@ void CIIProtocolStrategy::WriteTemplateData(const std::wstring& templateName, co
 		return;
 	}
 	
-	auto producer = flash::create_producer(this->GetChannel()->mixer(), boost::assign::list_of(env::template_folder()+TEXT("CG.fth")));
+	auto producer = flash::create_producer(this->GetChannel()->frame_factory(), this->GetChannel()->video_format_desc(), boost::assign::list_of(env::template_folder()+TEXT("CG.fth")));
 
 	std::wstringstream flashParam;
 	flashParam << TEXT("<invoke name=\"Add\" returntype=\"xml\"><arguments><number>1</number><string>") << currentProfile_ << '/' <<  templateName << TEXT("</string><number>0</number><true/><string> </string><string><![CDATA[ ") << xmlData << TEXT(" ]]></string></arguments></invoke>");
@@ -192,7 +192,7 @@ void CIIProtocolStrategy::WriteTemplateData(const std::wstring& templateName, co
 
 	CASPAR_LOG(info) << "Saved an instance of " << templateName << TEXT(" as ") << titleName ;
 
-	PutPreparedTemplate(titleName, safe_ptr<core::frame_producer>(std::move(producer)));
+	PutPreparedTemplate(titleName, spl::shared_ptr<core::frame_producer>(std::move(producer)));
 	
 }
 
@@ -200,8 +200,8 @@ void CIIProtocolStrategy::DisplayTemplate(const std::wstring& titleName)
 {
 	try
 	{
-		pChannel_->stage()->load(0, GetPreparedTemplate(titleName));
-		pChannel_->stage()->play(0);
+		pChannel_->stage().load(0, GetPreparedTemplate(titleName));
+		pChannel_->stage().play(0);
 
 		CASPAR_LOG(info) << L"Displayed title " << titleName ;
 	}
@@ -214,15 +214,15 @@ void CIIProtocolStrategy::DisplayTemplate(const std::wstring& titleName)
 void CIIProtocolStrategy::DisplayMediaFile(const std::wstring& filename) 
 {
 	transition_info transition;
-	transition.type = transition::mix;
+	transition.type = transition_type::mix;
 	transition.duration = 12;
 
-	auto pFP = create_producer(GetChannel()->mixer(), filename);
-	auto pTransition = create_transition_producer(GetChannel()->get_video_format_desc().field_mode, pFP, transition);
+	auto pFP = create_producer(GetChannel()->frame_factory(), GetChannel()->video_format_desc(), filename);
+	auto pTransition = create_transition_producer(GetChannel()->video_format_desc().field_mode, pFP, transition);
 
 	try
 	{
-		pChannel_->stage()->load(0, pTransition);
+		pChannel_->stage().load(0, pTransition);
 	}
 	catch(...)
 	{
@@ -231,14 +231,14 @@ void CIIProtocolStrategy::DisplayMediaFile(const std::wstring& filename)
 		return;
 	}
 
-	pChannel_->stage()->play(0);
+	pChannel_->stage().play(0);
 
 	CASPAR_LOG(info) << L"Displayed " << filename;
 }
 
-safe_ptr<core::frame_producer> CIIProtocolStrategy::GetPreparedTemplate(const std::wstring& titleName)
+spl::shared_ptr<core::frame_producer> CIIProtocolStrategy::GetPreparedTemplate(const std::wstring& titleName)
 {
-	safe_ptr<core::frame_producer> result(frame_producer::empty());
+	spl::shared_ptr<core::frame_producer> result(frame_producer::empty());
 
 	TitleList::iterator it = std::find(titles_.begin(), titles_.end(), titleName);
 	if(it != titles_.end()) {
@@ -251,7 +251,7 @@ safe_ptr<core::frame_producer> CIIProtocolStrategy::GetPreparedTemplate(const st
 	return result;
 }
 
-void CIIProtocolStrategy::PutPreparedTemplate(const std::wstring& titleName, safe_ptr<core::frame_producer>& pFP)
+void CIIProtocolStrategy::PutPreparedTemplate(const std::wstring& titleName, spl::shared_ptr<core::frame_producer>& pFP)
 {
 	CASPAR_LOG(debug) << L"Saved title with name " << titleName;
 

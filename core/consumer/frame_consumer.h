@@ -21,9 +21,10 @@
 
 #pragma once
 
-#include <common/memory/safe_ptr.h>
+#include "../monitor/monitor.h"
 
-#include <boost/noncopyable.hpp>
+#include <common/memory.h>
+
 #include <boost/property_tree/ptree_fwd.hpp>
 #include <boost/thread/future.hpp>
 
@@ -32,30 +33,46 @@
 #include <vector>
 
 namespace caspar { namespace core {
-	
-class read_frame;
-struct video_format_desc;
 
-struct frame_consumer : boost::noncopyable
+// Interface
+class frame_consumer : public monitor::observable
 {
+	frame_consumer(const frame_consumer&);
+	frame_consumer& operator=(const frame_consumer&);
+public:
+
+	// Static Members
+	
+	static const spl::shared_ptr<frame_consumer>& empty();
+
+	// Constructors
+
+	frame_consumer(){}
 	virtual ~frame_consumer() {}
 	
-	virtual boost::unique_future<bool> send(const safe_ptr<read_frame>& frame) = 0;
-	virtual void initialize(const video_format_desc& format_desc, int channel_index) = 0;
-	virtual std::wstring print() const = 0;
-	virtual boost::property_tree::wptree info() const = 0;
-	virtual bool has_synchronization_clock() const {return true;}
-	virtual size_t buffer_depth() const = 0;
-	virtual int index() const = 0;
+	// Methods
 
-	static const safe_ptr<frame_consumer>& empty();
+	virtual boost::unique_future<bool>		send(class const_frame frame) = 0;
+	virtual void							initialize(const struct video_format_desc& format_desc, int channel_index) = 0;
+	
+	// monitor::observable
+
+	virtual void subscribe(const monitor::observable::observer_ptr& o) = 0;
+	virtual void unsubscribe(const monitor::observable::observer_ptr& o) = 0;
+
+	// Properties
+
+	virtual std::wstring					print() const = 0;
+	virtual std::wstring					name() const = 0;
+	virtual boost::property_tree::wptree	info() const = 0;
+	virtual bool							has_synchronization_clock() const {return true;}
+	virtual int								buffer_depth() const = 0;
+	virtual int								index() const = 0;
 };
 
-safe_ptr<frame_consumer> create_consumer_cadence_guard(const safe_ptr<frame_consumer>& consumer);
-
-typedef std::function<safe_ptr<core::frame_consumer>(const std::vector<std::wstring>&)> consumer_factory_t;
+typedef std::function<spl::shared_ptr<frame_consumer>(const std::vector<std::wstring>&)> consumer_factory_t;
 
 void register_consumer_factory(const consumer_factory_t& factory);
-safe_ptr<core::frame_consumer> create_consumer(const std::vector<std::wstring>& params);
+spl::shared_ptr<frame_consumer> create_consumer(const std::vector<std::wstring>& params);
 
 }}

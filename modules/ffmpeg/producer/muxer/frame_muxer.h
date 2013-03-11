@@ -23,9 +23,11 @@
 
 #include "display_mode.h"
 
-#include <common/memory/safe_ptr.h>
+#include <common/forward.h>
+#include <common/memory.h>
 
 #include <core/mixer/audio/audio_mixer.h>
+#include <core/video_format.h>
 
 #include <boost/noncopyable.hpp>
 
@@ -33,35 +35,34 @@
 
 struct AVFrame;
 
-namespace caspar { 
-	
-namespace core {
+FORWARD2(caspar, core, struct pixel_format_desc);
+FORWARD2(caspar, core, class frame);
+FORWARD2(caspar, core, class frame_factory);
+FORWARD2(caspar, core, class draw_frame);
 
-class write_frame;
-class basic_frame;
-struct frame_factory;
-
-}
-
-namespace ffmpeg {
+namespace caspar { namespace ffmpeg {
 
 class frame_muxer : boost::noncopyable
 {
 public:
-	frame_muxer(double in_fps, const safe_ptr<core::frame_factory>& frame_factory, const std::wstring& filter = L"");
+	frame_muxer(double in_fps, const spl::shared_ptr<core::frame_factory>& frame_factory, const core::video_format_desc& format_desc, const std::wstring& filter = L"");
 	
-	void push(const std::shared_ptr<AVFrame>& video_frame, int hints = 0);
-	void push(const std::shared_ptr<core::audio_buffer>& audio_samples);
+	void push_video(const std::shared_ptr<AVFrame>& frame);
+	void push_audio(const std::shared_ptr<AVFrame>& frame);
 	
 	bool video_ready() const;
 	bool audio_ready() const;
 
-	std::shared_ptr<core::basic_frame> poll();
+	void clear();
+
+	bool empty() const;
+	core::draw_frame front() const;
+	void pop();
 
 	uint32_t calc_nb_frames(uint32_t nb_frames) const;
 private:
-	struct implementation;
-	safe_ptr<implementation> impl_;
+	struct impl;
+	spl::shared_ptr<impl> impl_;
 };
 
 }}

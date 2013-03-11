@@ -1,4 +1,4 @@
-////////////////////////////////////////////////////////////
+///////////////////////////
 //
 // SFML - Simple and Fast Multimedia Library
 // Copyright (C) 2007-2009 Laurent Gomila (laurent.gom@gmail.com)
@@ -20,7 +20,7 @@
 //
 // 3. This notice may not be removed or altered from any source distribution.
 //
-////////////////////////////////////////////////////////////
+///////////////////////////
 
 #pragma once
 
@@ -28,16 +28,13 @@
 
 #include "gl_check.h"
 
+#include "../log.h"
+
 #include <GL/glew.h>
-
-#include "../exception/exceptions.h"
-#include "../log/log.h"
-
-#include <boost/lexical_cast.hpp>
 
 namespace caspar { namespace gl {	
 
-void SMFL_GLCheckError(const std::string& expr, const std::string& file, unsigned int line)
+void SMFL_GLCheckError(const std::string&, const std::string& file, unsigned int line)
 {
 	// Get the last error
 	GLenum LastErrorCode = GL_NO_ERROR;
@@ -54,51 +51,51 @@ void SMFL_GLCheckError(const std::string& expr, const std::string& file, unsigne
 		switch (LastErrorCode)
 		{
 			case GL_INVALID_ENUM :
-				BOOST_THROW_EXCEPTION(ogl_invalid_enum()
+				CASPAR_THROW_EXCEPTION(ogl_invalid_enum()
 					<< msg_info("an unacceptable value has been specified for an enumerated argument")
-					<< errorstr("GL_INVALID_ENUM")
+					<< error_info("GL_INVALID_ENUM")
 					<< line_info(line)
 					<< source_info(file));
 
 			case GL_INVALID_VALUE :
-				BOOST_THROW_EXCEPTION(ogl_invalid_value()
+				CASPAR_THROW_EXCEPTION(ogl_invalid_value()
 					<< msg_info("a numeric argument is out of range")
-					<< errorstr("GL_INVALID_VALUE")
+					<< error_info("GL_INVALID_VALUE")
 					<< line_info(line)
 					<< source_info(file));
 
 			case GL_INVALID_OPERATION :
-				BOOST_THROW_EXCEPTION(ogl_invalid_operation()
+				CASPAR_THROW_EXCEPTION(ogl_invalid_operation()
 					<< msg_info("the specified operation is not allowed in the current state")
-					<< errorstr("GL_INVALID_OPERATION")
+					<< error_info("GL_INVALID_OPERATION")
 					<< line_info(line)
 					<< source_info(file));
 
 			case GL_STACK_OVERFLOW :
-				BOOST_THROW_EXCEPTION(ogl_stack_overflow()
+				CASPAR_THROW_EXCEPTION(ogl_stack_overflow()
 					<< msg_info("this command would cause a stack overflow")
-					<< errorstr("GL_STACK_OVERFLOW")
+					<< error_info("GL_STACK_OVERFLOW")
 					<< line_info(line)
 					<< source_info(file));
 
 			case GL_STACK_UNDERFLOW :
-				BOOST_THROW_EXCEPTION(ogl_stack_underflow()
+				CASPAR_THROW_EXCEPTION(ogl_stack_underflow()
 					<< msg_info("this command would cause a stack underflow")
-					<< errorstr("GL_STACK_UNDERFLOW")
+					<< error_info("GL_STACK_UNDERFLOW")
 					<< line_info(line)
 					<< source_info(file));
 
 			case GL_OUT_OF_MEMORY :
-				BOOST_THROW_EXCEPTION(ogl_out_of_memory()
+				CASPAR_THROW_EXCEPTION(ogl_out_of_memory()
 					<< msg_info("there is not enough memory left to execute the command")
-					<< errorstr("GL_OUT_OF_MEMORY")
+					<< error_info("GL_OUT_OF_MEMORY")
 					<< line_info(line)
 					<< source_info(file));
 
-			case GL_INVALID_FRAMEBUFFER_OPERATION :
-				BOOST_THROW_EXCEPTION(ogl_stack_underflow()
-					<< msg_info("the object bound to FRAMEBUFFER_BINDING is not \"framebuffer complete\"")
-					<< errorstr("GL_INVALID_FRAMEBUFFER_OPERATION")
+			case GL_INVALID_FRAMEBUFFER_OPERATION_EXT :
+				CASPAR_THROW_EXCEPTION(ogl_stack_underflow()
+					<< msg_info("the object bound to FRAMEBUFFER_BINDING_EXT is not \"framebuffer complete\"")
+					<< error_info("GL_INVALID_FRAMEBUFFER_OPERATION_EXT")
 					<< line_info(line)
 					<< source_info(file));
 		}

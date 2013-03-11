@@ -26,8 +26,8 @@
 #include <BlueVelvet4.h>
 #include <BlueHancUtils.h>
 
-#include <common/memory/safe_ptr.h>
-#include <common/exception/exceptions.h>
+#include <common/memory.h>
+#include <common/except.h>
 
 namespace caspar { 
 
@@ -45,8 +45,8 @@ extern BLUE_UINT32 (*encode_hanc_frame_ex)(BLUE_UINT32 card_type, struct hanc_st
 
 void blue_initialize();
 
-safe_ptr<CBlueVelvet4> create_blue();
-safe_ptr<CBlueVelvet4> create_blue(size_t device_index);
+spl::shared_ptr<CBlueVelvet4> create_blue();
+spl::shared_ptr<CBlueVelvet4> create_blue(int device_index);
 bool is_epoch_card(CBlueVelvet4& blue);
 std::wstring get_card_desc(CBlueVelvet4& blue);
 EVideoMode get_video_mode(CBlueVelvet4& blue, const core::video_format_desc& format_desc);

@@ -21,11 +21,14 @@
 
 #pragma once
 
-#include <common/memory/safe_ptr.h>
+#include <common/forward.h>
+#include <common/memory.h>
 
 #include <core/video_format.h>
-#include <core/producer/frame/pixel_format.h>
+#include <core/frame/pixel_format.h>
 #include <core/mixer/audio/audio_mixer.h>
+
+#include <array>
 
 enum PixelFormat;
 struct AVFrame;
@@ -34,42 +37,34 @@ struct AVPacket;
 struct AVRational;
 struct AVCodecContext;
 
-namespace caspar {
+FORWARD2(caspar, core, struct pixel_format_desc);
+FORWARD2(caspar, core, class mutable_frame);
+FORWARD2(caspar, core, class frame_factory);
 
-namespace core {
-
-struct pixel_format_desc;
-class write_frame;
-struct frame_factory;
-
-}
-
-namespace ffmpeg {
+namespace caspar { namespace ffmpeg {
 		
-std::shared_ptr<core::audio_buffer> flush_audio();
-std::shared_ptr<core::audio_buffer> empty_audio();
-std::shared_ptr<AVFrame>			flush_video();
-std::shared_ptr<AVFrame>			empty_video();
-
 // Utils
 
-static const int CASPAR_PIX_FMT_LUMA = 10; // Just hijack some unual pixel format.
+core::field_mode					get_mode(const AVFrame& frame);
+core::mutable_frame					make_frame(const void* tag, const spl::shared_ptr<AVFrame>& decoded_frame, double fps, core::frame_factory& frame_factory);
+spl::shared_ptr<AVFrame>			make_av_frame(core::mutable_frame& frame);
+spl::shared_ptr<AVFrame>			make_av_frame(core::const_frame& frame);
+spl::shared_ptr<AVFrame>			make_av_frame(std::array<uint8_t*, 4> data, const core::pixel_format_desc& pix_desc);
 
-core::field_mode::type		get_mode(const AVFrame& frame);
-int							make_alpha_format(int format); // NOTE: Be careful about CASPAR_PIX_FMT_LUMA, change it to PIX_FMT_GRAY8 if you want to use the frame inside some ffmpeg function.
-safe_ptr<core::write_frame> make_write_frame(const void* tag, const safe_ptr<AVFrame>& decoded_frame, const safe_ptr<core::frame_factory>& frame_factory, int hints);
+core::pixel_format_desc				pixel_format_desc(PixelFormat pix_fmt, int width, int height);
 
-safe_ptr<AVPacket> create_packet();
+spl::shared_ptr<AVPacket> create_packet();
+spl::shared_ptr<AVFrame>  create_frame();
 
-safe_ptr<AVCodecContext> open_codec(AVFormatContext& context,  enum AVMediaType type, int& index);
-safe_ptr<AVFormatContext> open_input(const std::wstring& filename);
+spl::shared_ptr<AVCodecContext> open_codec(AVFormatContext& context,  enum AVMediaType type, int& index);
+spl::shared_ptr<AVFormatContext> open_input(const std::wstring& filename);
 
 bool is_sane_fps(AVRational time_base);
 AVRational fix_time_base(AVRational time_base);
 
 double read_fps(AVFormatContext& context, double fail_value);
 
-std::wstring print_mode(size_t width, size_t height, double fps, bool interlaced);
+std::wstring print_mode(int width, int height, double fps, bool interlaced);
 
 std::wstring probe_stem(const std::wstring stem);
 bool is_valid_file(const std::wstring filename);

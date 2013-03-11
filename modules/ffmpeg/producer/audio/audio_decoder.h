@@ -22,8 +22,9 @@
 #pragma once
 
 #include <core/mixer/audio/audio_mixer.h>
+#include <core/monitor/monitor.h>
 
-#include <common/memory/safe_ptr.h>
+#include <common/memory.h>
 
 #include <boost/noncopyable.hpp>
 
@@ -40,23 +41,29 @@ struct video_format_desc;
 
 namespace ffmpeg {
 	
-class audio_decoder : boost::noncopyable
+class audio_decoder : public monitor::observable
+					, boost::noncopyable
 {
 public:
-	explicit audio_decoder(const safe_ptr<AVFormatContext>& context, const core::video_format_desc& format_desc);
+	explicit audio_decoder(class input& input, const core::video_format_desc& format_desc);
 	
-	bool ready() const;
-	void push(const std::shared_ptr<AVPacket>& packet);
-	std::shared_ptr<core::audio_buffer> poll();
+	audio_decoder(audio_decoder&& other);
+	audio_decoder& operator=(audio_decoder&& other);
+
+	std::shared_ptr<AVFrame> operator()();
 
 	uint32_t nb_frames() const;
 	
-	uint32_t file_frame_number() const;
-
 	std::wstring print() const;
+	
+	// monitor::observable
+	
+	void subscribe(const monitor::observable::observer_ptr& o) override;
+	void unsubscribe(const monitor::observable::observer_ptr& o) override;
+
 private:
-	struct implementation;
-	safe_ptr<implementation> impl_;
+	struct impl;
+	spl::shared_ptr<impl> impl_;
 };
 
 }}

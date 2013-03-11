@@ -18,17 +18,21 @@
 *
 * Author: Robert Nagy, ronag89@gmail.com
 */
-
+#include "stdafx.h"
 
 #include "server.h"
 
-#include <common/env.h>
-#include <common/exception/exceptions.h>
-#include <common/utility/string.h>
+#include <accelerator/accelerator.h>
 
-#include <core/mixer/gpu/ogl_device.h>
+#include <common/env.h>
+#include <common/except.h>
+#include <common/utf.h>
+#include <common/memory.h>
+
 #include <core/video_channel.h>
+#include <core/video_format.h>
 #include <core/producer/stage.h>
+#include <core/producer/frame_producer.h>
 #include <core/consumer/output.h>
 
 #include <modules/bluefish/bluefish.h>
@@ -36,23 +40,20 @@
 #include <modules/ffmpeg/ffmpeg.h>
 #include <modules/flash/flash.h>
 #include <modules/oal/oal.h>
-#include <modules/ogl/ogl.h>
-#include <modules/silverlight/silverlight.h>
+#include <modules/screen/screen.h>
 #include <modules/image/image.h>
-#include <modules/replay/replay.h>
 
 #include <modules/oal/consumer/oal_consumer.h>
 #include <modules/bluefish/consumer/bluefish_consumer.h>
 #include <modules/decklink/consumer/decklink_consumer.h>
-#include <modules/ogl/consumer/ogl_consumer.h>
+#include <modules/screen/consumer/screen_consumer.h>
 #include <modules/ffmpeg/consumer/ffmpeg_consumer.h>
-#include <modules/replay/consumer/replay_consumer.h>
 
 #include <protocol/amcp/AMCPProtocolStrategy.h>
 #include <protocol/cii/CIIProtocolStrategy.h>
 #include <protocol/CLK/CLKProtocolStrategy.h>
 #include <protocol/util/AsyncEventServer.h>
-#include <protocol/util/stateful_protocol_strategy_wrapper.h>
+#include <protocol/util/strategy_adapters.h>
 
 #include <boost/algorithm/string.hpp>
 #include <boost/lexical_cast.hpp>
@@ -65,15 +66,17 @@ namespace caspar {
 using namespace core;
 using namespace protocol;
 
-struct server::implementation : boost::noncopyable
+struct server::impl : boost::noncopyable
 {
-	safe_ptr<ogl_device>						ogl_;
-	std::vector<safe_ptr<IO::AsyncEventServer>> async_servers_;	
-	std::vector<safe_ptr<video_channel>>		channels_;
+	monitor::basic_subject								event_subject_;
+	accelerator::accelerator							accelerator_;
+	std::vector<spl::shared_ptr<IO::AsyncEventServer>>	async_servers_;	
+	std::vector<spl::shared_ptr<video_channel>>			channels_;
 
-	implementation()		
-		: ogl_(ogl_device::create())
-	{			
+	impl()		
+		: accelerator_(env::properties().get(L"configuration.accelerator", L"auto"))
+	{	
+
 		ffmpeg::init();
 		CASPAR_LOG(info) << L"Initialized ffmpeg module.";
 							  
@@ -86,7 +89,7 @@ struct server::implementation : boost::noncopyable
 		oal::init();		  
 		CASPAR_LOG(info) << L"Initialized oal module.";
 							  
-		ogl::init();		  
+		screen::init();		  
 		CASPAR_LOG(info) << L"Initialized ogl module.";
 
 		image::init();		  
@@ -95,9 +98,6 @@ struct server::implementation : boost::noncopyable
 		flash::init();		  
 		CASPAR_LOG(info) << L"Initialized flash module.";
 
-		replay::init();
-		CASPAR_LOG(info) << L"Initialized replay module.";
-
 		setup_channels(env::properties());
 		CASPAR_LOG(info) << L"Initialized channels.";
 
@@ -105,12 +105,15 @@ struct server::implementation : boost::noncopyable
 		CASPAR_LOG(info) << L"Initialized controllers.";
 	}
 
-	~implementation()
+	~impl()
 	{		
-		ffmpeg::uninit();
-
 		async_servers_.clear();
 		channels_.clear();
+
+		Sleep(500); // HACK: Wait for asynchronous destruction of producers and consumers.
+
+		image::uninit();
+		ffmpeg::uninit();
 	}
 				
 	void setup_channels(const boost::property_tree::wptree& pt)
@@ -118,11 +121,11 @@ struct server::implementation : boost::noncopyable
 		using boost::property_tree::wptree;
 		BOOST_FOREACH(auto& xml_channel, pt.get_child(L"configuration.channels"))
 		{		
-			auto format_desc = video_format_desc::get(widen(xml_channel.second.get(L"video-mode", L"PAL")));		
+			auto format_desc = video_format_desc(xml_channel.second.get(L"video-mode", L"PAL"));		
 			if(format_desc.format == video_format::invalid)
-				BOOST_THROW_EXCEPTION(caspar_exception() << msg_info("Invalid video-mode."));
+				CASPAR_THROW_EXCEPTION(caspar_exception() << msg_info("Invalid video-mode."));
 			
-			channels_.push_back(make_safe<video_channel>(channels_.size()+1, format_desc, ogl_));
+			auto channel = spl::make_shared<video_channel>(static_cast<int>(channels_.size()+1), format_desc, accelerator_.create_image_mixer());
 			
 			BOOST_FOREACH(auto& xml_consumer, xml_channel.second.get_child(L"consumers"))
 			{
@@ -130,30 +133,31 @@ struct server::implementation : boost::noncopyable
 				{
 					auto name = xml_consumer.first;
 					if(name == L"screen")
-						channels_.back()->output()->add(ogl::create_consumer(xml_consumer.second));					
+						channel->output().add(caspar::screen::create_consumer(xml_consumer.second));					
 					else if(name == L"bluefish")					
-						channels_.back()->output()->add(bluefish::create_consumer(xml_consumer.second));					
+						channel->output().add(bluefish::create_consumer(xml_consumer.second));					
 					else if(name == L"decklink")					
-						channels_.back()->output()->add(decklink::create_consumer(xml_consumer.second));				
+						channel->output().add(decklink::create_consumer(xml_consumer.second));				
 					else if(name == L"file")					
-						channels_.back()->output()->add(ffmpeg::create_consumer(xml_consumer.second));						
+						channel->output().add(ffmpeg::create_consumer(xml_consumer.second));						
 					else if(name == L"system-audio")
-						channels_.back()->output()->add(oal::create_consumer());
-					else if(name == L"replay")
-						channels_.back()->output()->add(oal::create_consumer());
+						channel->output().add(oal::create_consumer());		
 					else if(name != L"<xmlcomment>")
-						CASPAR_LOG(warning) << "Invalid consumer: " << widen(name);	
+						CASPAR_LOG(warning) << "Invalid consumer: " << name;	
 				}
 				catch(...)
 				{
 					CASPAR_LOG_CURRENT_EXCEPTION();
 				}
-			}							
+			}		
+
+		    channel->subscribe(monitor::observable::observer_ptr(event_subject_));
+			channels_.push_back(channel);
 		}
 
 		// Dummy diagnostics channel
 		if(env::properties().get(L"configuration.channel-grid", false))
-			channels_.push_back(make_safe<video_channel>(channels_.size()+1, core::video_format_desc::get(core::video_format::x576p2500), ogl_));
+			channels_.push_back(spl::make_shared<video_channel>(static_cast<int>(channels_.size()+1), core::video_format_desc(core::video_format::x576p2500), accelerator_.create_image_mixer()));
 	}
 		
 	void setup_controllers(const boost::property_tree::wptree& pt)
@@ -169,12 +173,11 @@ struct server::implementation : boost::noncopyable
 				if(name == L"tcp")
 				{					
 					unsigned int port = xml_controller.second.get(L"port", 5250);
-					auto asyncbootstrapper = make_safe<IO::AsyncEventServer>(create_protocol(protocol), port);
-					asyncbootstrapper->Start();
+					auto asyncbootstrapper = spl::make_shared<IO::AsyncEventServer>(create_protocol(protocol), port);
 					async_servers_.push_back(asyncbootstrapper);
 				}
 				else
-					CASPAR_LOG(warning) << "Invalid controller: " << widen(name);	
+					CASPAR_LOG(warning) << "Invalid controller: " << name;	
 			}
 			catch(...)
 			{
@@ -183,28 +186,31 @@ struct server::implementation : boost::noncopyable
 		}
 	}
 
-	safe_ptr<IO::IProtocolStrategy> create_protocol(const std::wstring& name) const
+	IO::protocol_strategy_factory<char>::ptr create_protocol(const std::wstring& name) const
 	{
+		using namespace IO;
+
 		if(boost::iequals(name, L"AMCP"))
-			return make_safe<amcp::AMCPProtocolStrategy>(channels_);
+			return wrap_legacy_protocol("\r\n", spl::make_shared<amcp::AMCPProtocolStrategy>(channels_));
 		else if(boost::iequals(name, L"CII"))
-			return make_safe<cii::CIIProtocolStrategy>(channels_);
+			return wrap_legacy_protocol("\r\n", spl::make_shared<cii::CIIProtocolStrategy>(channels_));
 		else if(boost::iequals(name, L"CLOCK"))
-			//return make_safe<CLK::CLKProtocolStrategy>(channels_);
-			return make_safe<IO::stateful_protocol_strategy_wrapper>([=]
-			{
-				return std::make_shared<CLK::CLKProtocolStrategy>(channels_);
-			});
+			return spl::make_shared<to_unicode_adapter_factory>(
+					"ISO-8859-1",
+					spl::make_shared<CLK::clk_protocol_strategy_factory>(channels_));
 		
-		BOOST_THROW_EXCEPTION(caspar_exception() << arg_name_info("name") << arg_value_info(narrow(name)) << msg_info("Invalid protocol"));
+		CASPAR_THROW_EXCEPTION(caspar_exception() << arg_name_info(L"name") << arg_value_info(name) << msg_info(L"Invalid protocol"));
 	}
+
 };
 
-server::server() : impl_(new implementation()){}
+server::server() : impl_(new impl()){}
 
-const std::vector<safe_ptr<video_channel>> server::get_channels() const
+const std::vector<spl::shared_ptr<video_channel>> server::channels() const
 {
 	return impl_->channels_;
 }
+void server::subscribe(const monitor::observable::observer_ptr& o){impl_->event_subject_.subscribe(o);}
+void server::unsubscribe(const monitor::observable::observer_ptr& o){impl_->event_subject_.unsubscribe(o);}
 
 }

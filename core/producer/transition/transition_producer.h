@@ -21,52 +21,55 @@
 
 #pragma once
 
-#include "../frame_producer.h"
 #include "../../video_format.h"
 
-#include <common/utility/tweener.h>
+#include <common/enum_class.h>
+#include <common/memory.h>
+#include <common/tweener.h>
 
 #include <string>
-#include <memory>
 
 namespace caspar { namespace core {
-
-struct transition
+	
+struct transition_type_def
 {
 	enum type
 	{
-
-		cut = 1,
-		mix,
-		push,
-		slide,
-		wipe
+		cut,	
+		mix,	
+		push,	 
+		slide,	
+		wipe,
+		count
 	};
 };
-
-struct transition_direction
+typedef enum_class<transition_type_def> transition_type;
+	
+struct transition_direction_def
 {
 	enum type
 	{
-		from_left = 1,
-		from_right
+		from_left,
+		from_right,
+		count
 	};
 };
+typedef enum_class<transition_direction_def> transition_direction;
 
 struct transition_info
 {
 	transition_info() 
-		: type(transition::cut)
+		: type(transition_type::cut)
 		, duration(0)
 		, direction(transition_direction::from_left)
-		, tweener(get_tweener(L"linear")){}
+		, tweener(L"linear"){}
 		
-	size_t						duration;
-	transition_direction::type	direction;
-	transition::type			type;
-	tweener_t					tweener;
+	int						duration;
+	transition_direction	direction;
+	transition_type			type;
+	tweener					tweener;
 };
 
-safe_ptr<frame_producer> create_transition_producer(const field_mode::type& mode, const safe_ptr<frame_producer>& destination, const transition_info& info);
+spl::shared_ptr<class frame_producer> create_transition_producer(const field_mode& mode, const spl::shared_ptr<class frame_producer>& destination, const transition_info& info);
 
 }}

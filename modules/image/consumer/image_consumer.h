@@ -21,7 +21,7 @@
 
 #pragma once
 
-#include <common/memory/safe_ptr.h>
+#include <common/memory.h>
 
 #include <core/video_format.h>
 
@@ -33,11 +33,11 @@
 namespace caspar { 
 
 namespace core {
-	struct frame_consumer;
+	class frame_consumer;
 }
 
 namespace image {
 	
-safe_ptr<core::frame_consumer> create_consumer(const std::vector<std::wstring>& params);
+spl::shared_ptr<core::frame_consumer> create_consumer(const std::vector<std::wstring>& params);
 
 }}

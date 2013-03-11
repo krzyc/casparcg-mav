@@ -22,44 +22,21 @@
  
 #pragma once
 
-#include <vector>
-#include <string>
-#include <sstream>
-
-#include <core/video_channel.h>
-
+#include "../util/protocol_strategy.h"
 #include "clk_command_processor.h"
-#include "../util/ProtocolStrategy.h"
+#include <core/video_channel.h>
 
 namespace caspar { namespace protocol { namespace CLK {
 
-/**
- * Can only handle one connection at a time safely, therefore it should be
- * wrapped in a stateful_protocol_strategy_wrapper.
- */
-class CLKProtocolStrategy : public IO::IProtocolStrategy
+class clk_protocol_strategy_factory : public IO::protocol_strategy_factory<wchar_t>
 {
-public:
-	CLKProtocolStrategy(const std::vector<safe_ptr<core::video_channel>>& channels);
-
-	void Parse(const TCHAR* pData, int charCount, IO::ClientInfoPtr pClientInfo);
-	UINT GetCodepage() { return 28591; }	//ISO 8859-1
-	
-private:
-	void reset();
-
-	enum ParserState
-	{
-		ExpectingNewCommand,
-		ExpectingCommand,
-		ExpectingParameter
-	};
-
-	ParserState	currentState_;
-	std::wstringstream currentCommandString_;
-	std::wstring command_name_;
-	std::vector<std::wstring> parameters_;
 	clk_command_processor command_processor_;
+public:
+	clk_protocol_strategy_factory(
+			const std::vector<spl::shared_ptr<core::video_channel>>& channels);
+
+	virtual IO::protocol_strategy<wchar_t>::ptr create(
+		const IO::client_connection<wchar_t>::ptr& client_connection);
 };
 
 }}}

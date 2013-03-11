@@ -21,8 +21,8 @@
 
 #pragma once
 
-#include <common/exception/exceptions.h>
-#include <common/log/log.h>
+#include <common/except.h>
+#include <common/log.h>
 #include <core/video_format.h>
 
 #include "../interop/DeckLinkAPI_h.h"
@@ -35,9 +35,9 @@
 
 namespace caspar { namespace decklink {
 	
-static BMDDisplayMode get_decklink_video_format(core::video_format::type fmt) 
+static BMDDisplayMode get_decklink_video_format(core::video_format fmt) 
 {
-	switch(fmt)
+	switch(fmt.value())
 	{
 	case core::video_format::pal:			return bmdModePAL;
 	case core::video_format::ntsc:			return bmdModeNTSC;
@@ -65,7 +65,7 @@ static BMDDisplayMode get_decklink_video_format(core::video_format::type fmt)
 	}
 }
 
-static core::video_format::type get_caspar_video_format(BMDDisplayMode fmt) 
+static core::video_format get_caspar_video_format(BMDDisplayMode fmt) 
 {
 	switch(fmt)
 	{
@@ -79,12 +79,12 @@ static core::video_format::type get_caspar_video_format(BMDDisplayMode fmt)
 	case bmdModeHD1080i50:					return core::video_format::x1080i5000;	
 	case bmdModeHD1080i5994:				return core::video_format::x1080i5994;	
 	case bmdModeHD1080i6000:				return core::video_format::x1080i6000;	
-	case bmdModeHD1080p25:					return core::video_format::x1080p2500;	
-	case bmdModeHD1080p2997:				return core::video_format::x1080p2997;	
-	case bmdModeHD1080p30:					return core::video_format::x1080p3000;	
-	case bmdModeHD1080p50:					return core::video_format::x1080p5000;	
-	case bmdModeHD1080p5994:				return core::video_format::x1080p5994;	
-	case bmdModeHD1080p6000:				return core::video_format::x1080p6000;	
+	case bmdModeHD1080p25:					return core::video_format::x1080p2500;
+	case bmdModeHD1080p2997:				return core::video_format::x1080p2997;
+	case bmdModeHD1080p30:					return core::video_format::x1080p3000;
+	case bmdModeHD1080p50:					return core::video_format::x1080p5000;
+	case bmdModeHD1080p5994:				return core::video_format::x1080p5994;
+	case bmdModeHD1080p6000:				return core::video_format::x1080p6000;
 	default:								return core::video_format::invalid;	
 	}
 }
@@ -103,14 +103,14 @@ BMDDisplayMode get_display_mode(const T& device, BMDDisplayMode format, BMDPixel
 	}
 
 	if(!mode)
-		BOOST_THROW_EXCEPTION(caspar_exception() << msg_info("Device could not find requested video-format.") 
+		CASPAR_THROW_EXCEPTION(caspar_exception() << msg_info("Device could not find requested video-format.") 
 												 << arg_value_info(boost::lexical_cast<std::string>(format))
 												 << arg_name_info("format"));
 		
 	BMDDisplayModeSupport displayModeSupport;
 	if(FAILED(device->DoesSupportVideoMode(mode->GetDisplayMode(), pix_fmt, flag, &displayModeSupport, nullptr)) || displayModeSupport == bmdDisplayModeNotSupported)
 		CASPAR_LOG(warning) << L"Device does not support video-format: " << mode->GetDisplayMode();
-		//BOOST_THROW_EXCEPTION(caspar_exception() << msg_info("Device does not support requested video-format.")
+		//CASPAR_THROW_EXCEPTION(caspar_exception() << msg_info("Device does not support requested video-format.")
 		//										 << arg_value_info(boost::lexical_cast<std::string>(format))
 		//										 << arg_name_info("format"));
 	else if(displayModeSupport == bmdDisplayModeSupportedWithConversion)
@@ -120,13 +120,13 @@ BMDDisplayMode get_display_mode(const T& device, BMDDisplayMode format, BMDPixel
 }
 
 template<typename T, typename F>
-static BMDDisplayMode get_display_mode(const T& device, core::video_format::type fmt, BMDPixelFormat pix_fmt, F flag)
+static BMDDisplayMode get_display_mode(const T& device, core::video_format fmt, BMDPixelFormat pix_fmt, F flag)
 {	
 	return get_display_mode(device, get_decklink_video_format(fmt), pix_fmt, flag);
 }
 
 template<typename T>
-static std::wstring get_version(T& iterator)
+static std::wstring version(T& iterator)
 {
 	CComQIPtr<IDeckLinkAPIInformation> info = iterator;
 	if (!info)
@@ -142,14 +142,14 @@ static CComPtr<IDeckLink> get_device(size_t device_index)
 {
 	CComPtr<IDeckLinkIterator> pDecklinkIterator;
 	if(FAILED(pDecklinkIterator.CoCreateInstance(CLSID_CDeckLinkIterator)))
-		BOOST_THROW_EXCEPTION(caspar_exception() << msg_info("Decklink drivers not found."));
+		CASPAR_THROW_EXCEPTION(caspar_exception() << msg_info("Decklink drivers not found."));
 		
 	size_t n = 0;
 	CComPtr<IDeckLink> decklink;
 	while(n < device_index && pDecklinkIterator->Next(&decklink) == S_OK){++n;}	
 
 	if(n != device_index || !decklink)
-		BOOST_THROW_EXCEPTION(caspar_exception() << msg_info("Decklink device not found.") << arg_name_info("device_index") << arg_value_info(boost::lexical_cast<std::string>(device_index)));
+		CASPAR_THROW_EXCEPTION(caspar_exception() << msg_info("Decklink device not found.") << arg_name_info("device_index") << arg_value_info(boost::lexical_cast<std::string>(device_index)));
 		
 	return decklink;
 }

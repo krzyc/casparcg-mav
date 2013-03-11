@@ -21,39 +21,62 @@
 
 #pragma once
 
-#include <common/memory/safe_ptr.h>
+#include <common/memory.h>
+#include <common/reactive.h>
+#include <common/forward.h>
 
-#include <boost/noncopyable.hpp>
+#include "monitor/monitor.h"
 
 #include <boost/property_tree/ptree_fwd.hpp>
 
+FORWARD3(caspar, core, ogl, class accelerator);
+FORWARD2(caspar, core, class stage);
+FORWARD2(caspar, core, class mixer);
+FORWARD2(caspar, core, class output);
+FORWARD2(caspar, core, class image_mixer);
+FORWARD2(caspar, core, struct video_format_desc);
+FORWARD2(caspar, core, class frame_factory);
+
 namespace caspar { namespace core {
 	
-class stage;
-class mixer;
-class output;
-class ogl_device;
-struct video_format_desc;
-
-class video_channel : boost::noncopyable
+class video_channel sealed : public monitor::observable
 {
+	video_channel(const video_channel&);
+	video_channel& operator=(const video_channel&);
 public:
-	explicit video_channel(int index, const video_format_desc& format_desc, const safe_ptr<ogl_device>& ogl);
 
-	safe_ptr<stage> stage();
-	safe_ptr<mixer>	mixer();
-	safe_ptr<output> output();
+	// Static Members
+
+	// Constructors
+
+	explicit video_channel(int index, const video_format_desc& format_desc, std::unique_ptr<image_mixer> image_mixer);
+	~video_channel();
+
+	// Methods
+			
+	// monitor::observable
+
+	void subscribe(const monitor::observable::observer_ptr& o) override;
+	void unsubscribe(const monitor::observable::observer_ptr& o) override;
+
+	// Properties
+
+	const core::stage&					 stage() const;
+	core::stage&						 stage();
+	const core::mixer&					 mixer() const;
+	core::mixer&						 mixer();
+	const core::output&					 output() const;
+	core::output&						 output();
+										 
+	core::video_format_desc				 video_format_desc() const;
+	void								 video_format_desc(const core::video_format_desc& format_desc);
 	
-	video_format_desc get_video_format_desc() const;
-	void set_video_format_desc(const video_format_desc& format_desc);
-	
-	boost::property_tree::wptree info() const;
+	spl::shared_ptr<core::frame_factory> frame_factory();
 
-	int index() const;
-
+	boost::property_tree::wptree		 info() const;
 private:
-	struct implementation;
-	safe_ptr<implementation> impl_;
+	struct impl;
+	spl::unique_ptr<impl> impl_;
 };
 
 }}

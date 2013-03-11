@@ -23,39 +23,52 @@
 
 #include "blend_modes.h"
 
-#include <common/memory/safe_ptr.h>
+#include <common/forward.h>
+#include <common/future_fwd.h>
+#include <common/memory.h>
 
-#include <core/producer/frame/frame_visitor.h>
+#include <core/video_format.h>
+#include <core/frame/frame_visitor.h>
+#include <core/frame/frame_factory.h>
+#include <core/frame/frame.h>
 
-#include <boost/noncopyable.hpp>
+#include <boost/range.hpp>
 
-#include <boost/thread/future.hpp>
+#include <cstdint>
+
+FORWARD2(caspar, core, struct pixel_format_desc);
 
 namespace caspar { namespace core {
-
-class write_frame;
-class host_buffer;
-class ogl_device;
-struct video_format_desc;
-struct pixel_format_desc;
-
-class image_mixer : public core::frame_visitor, boost::noncopyable
-{
-public:
-	image_mixer(const safe_ptr<ogl_device>& ogl);
 	
-	virtual void begin(core::basic_frame& frame);
-	virtual void visit(core::write_frame& frame);
-	virtual void end();
+// Interface
+class image_mixer : public frame_visitor
+				  , public frame_factory
+{
+	image_mixer(const image_mixer&);
+	image_mixer& operator=(const image_mixer&);
+public:
 
-	void begin_layer(blend_mode::type blend_mode);
-	void end_layer();
+	// Static Members
+
+	// Constructors
+
+	image_mixer(){}
+	virtual ~image_mixer(){}
+	
+	// Methods
+
+	virtual void push(const struct frame_transform& frame) = 0;
+	virtual void visit(const class const_frame& frame) = 0;
+	virtual void pop() = 0;
+
+	virtual void begin_layer(blend_mode blend_mode) = 0;
+	virtual void end_layer() = 0;
 		
-	boost::unique_future<safe_ptr<host_buffer>> operator()(const video_format_desc& format_desc);
-		
-private:
-	struct implementation;
-	safe_ptr<implementation> impl_;
+	virtual boost::unique_future<array<const std::uint8_t>> operator()(const struct video_format_desc& format_desc) = 0;
+
+	virtual class mutable_frame create_frame(const void* tag, const struct pixel_format_desc& desc) = 0;
+
+	// Properties
 };
 
 }}

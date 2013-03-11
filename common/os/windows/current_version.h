@@ -24,13 +24,13 @@
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
 
-#include <windows.h>
+#include "windows.h"
 
 #include <string>
 
 namespace caspar {
 
-static std::wstring get_win_product_name()
+static std::wstring win_product_name()
 {
 	std::wstring result = L"Unknown Windows Product Name.";
 	HKEY hkey; 
@@ -50,7 +50,7 @@ static std::wstring get_win_product_name()
 	return result;
 }
 
-static std::wstring get_win_sp_version()
+static std::wstring win_sp_version()
 {
 	std::wstring result =  L"";
 	HKEY hkey; 
