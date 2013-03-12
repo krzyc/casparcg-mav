@@ -30,9 +30,9 @@
 
 #include <tbb/parallel_for.h>
 
-//#define OPTIMIZE_RGB_TO_BGRA
-//#define OPTIMIZE_BGRA_TO_RGB
-#define USE_PARALLEL_FOR
+// #define OPTIMIZE_RGB_TO_BGRA
+// #define OPTIMIZE_BGRA_TO_RGB
+// #define USE_PARALLEL_FOR
 
 namespace caspar { namespace replay {
 
