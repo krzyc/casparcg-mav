@@ -52,6 +52,14 @@
     <ProjectReference Include="..\modules\oal\oal.vcxproj">
       <Project>{82ed7ed6-8a15-40ec-a8af-f5e712e0da68}</Project>
     </ProjectReference>
+    <ProjectReference Include="..\modules\replay\replay.vcxproj">
+      <Project>{c6e3ed65-e4c8-4612-8eaa-08a6b28d157c}</Project>
+      <Private>true</Private>
+      <ReferenceOutputAssembly>true</ReferenceOutputAssembly>
+      <CopyLocalSatelliteAssemblies>false</CopyLocalSatelliteAssemblies>
+      <LinkLibraryDependencies>true</LinkLibraryDependencies>
+      <UseLibraryDependencyInputs>false</UseLibraryDependencyInputs>
+    </ProjectReference>
     <ProjectReference Include="..\modules\reroute\reroute.vcxproj">
       <Project>{7d58bd57-fdd5-46e6-a23b-ed14b5314a0e}</Project>
     </ProjectReference>
