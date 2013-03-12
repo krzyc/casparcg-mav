@@ -180,11 +180,11 @@ std::wstring MediaInfo(const boost::filesystem::path& path)
 		std::wstring clipttype = TEXT("N/A");
 		std::wstring extension = boost::to_upper_copy(path.extension().wstring());
 		if(extension == TEXT(".TGA") || extension == TEXT(".COL") || extension == L".PNG" || extension == L".JPEG" || extension == L".JPG" ||
-			extension == L"GIF" || extension == L"BMP")
+			extension == L".GIF" || extension == L".BMP")
 			clipttype = TEXT("STILL");
 		else if(extension == TEXT(".WAV") || extension == TEXT(".MP3"))
 			clipttype = TEXT("STILL");
-		else if(extension == TEXT("SWF") || extension == TEXT("CT") || extension == TEXT("DV") || extension == TEXT("MOV") || extension == TEXT("MPG") || extension == TEXT("AVI") || extension == TEXT("MAV") || caspar::ffmpeg::is_valid_file(path.wstring()))
+		else if(extension == TEXT(".SWF") || extension == TEXT(".CT") || extension == TEXT(".DV") || extension == TEXT(".MOV") || extension == TEXT(".MPG") || extension == TEXT(".AVI") || extension == TEXT(".MAV") || caspar::ffmpeg::is_valid_file(path.wstring()))
 			clipttype = TEXT("MOVIE");
 
 		if(clipttype != TEXT("N/A"))

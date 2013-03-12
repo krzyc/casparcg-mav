@@ -26,7 +26,11 @@
 
 #include "frame_operations.h"
 
+#include <Windows.h>
+
 #pragma once
+
+typedef HANDLE						mjpeg_file_handle;
 
 namespace caspar { namespace replay {
 
@@ -48,15 +52,16 @@ namespace caspar { namespace replay {
 		}
 	};
 
-	boost::shared_ptr<FILE> safe_fopen(const char* filename, const char* mode, int shareFlags);
-	void write_index_header(boost::shared_ptr<FILE> outfile_idx, const core::video_format_desc* format_desc);
-	void write_index(boost::shared_ptr<FILE> outfile_idx, long long offset);
-	long long write_frame(boost::shared_ptr<FILE> outfile, size_t width, size_t height, mmx_uint8_t* image, short quality);
-	long long read_index(boost::shared_ptr<FILE> infile_idx);
-	long long tell_index(boost::shared_ptr<FILE> infile_idx);
-	int seek_index(boost::shared_ptr<FILE> infile_idx, long long frame, int origin);
-	long long tell_index(boost::shared_ptr<FILE> infile_idx);
-	int read_index_header(boost::shared_ptr<FILE> infile_idx, mjpeg_file_header** header);
-	size_t read_frame(boost::shared_ptr<FILE> infile, size_t* width, size_t* height, mmx_uint8_t** image);
-	int seek_frame(boost::shared_ptr<FILE> infile, long long offset, int origin);
+	mjpeg_file_handle safe_fopen(const wchar_t* filename, DWORD mode, DWORD shareFlags);
+	void safe_fclose(mjpeg_file_handle file_handle);
+	void write_index_header(mjpeg_file_handle outfile_idx, const core::video_format_desc* format_desc);
+	void write_index(mjpeg_file_handle outfile_idx, long long offset);
+	long long write_frame(mjpeg_file_handle outfile, size_t width, size_t height, mmx_uint8_t* image, short quality);
+	long long read_index(mjpeg_file_handle infile_idx);
+	long long tell_index(mjpeg_file_handle infile_idx);
+	int seek_index(mjpeg_file_handle infile_idx, long long frame, DWORD origin);
+	long long tell_frame(mjpeg_file_handle infile);
+	int read_index_header(mjpeg_file_handle infile_idx, mjpeg_file_header** header);
+	size_t read_frame(mjpeg_file_handle infile, size_t* width, size_t* height, mmx_uint8_t** image);
+	int seek_frame(mjpeg_file_handle infile, long long offset, DWORD origin);
 }}

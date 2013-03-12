@@ -31,19 +31,72 @@
 #include <core/video_format.h>
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include <jpeglib.h>
+#include <jerror.h>
 #include <setjmp.h>
 #include "frame_operations.h"
 #include "file_operations.h"
 
+#include <Windows.h>
+
 namespace caspar { namespace replay {
 
-	boost::shared_ptr<FILE> safe_fopen(const char* filename, const char* mode, int shareFlags)
+#define VIDEO_OUTPUT_BUF_SIZE		4096
+#define VIDEO_INPUT_BUF_SIZE		4096
+
+	struct error_mgr {
+		struct jpeg_error_mgr pub;	/* "public" fields */
+		jmp_buf setjmp_buffer;	/* for return to caller */
+	}; 
+
+	typedef struct tag_src_mgr {
+		/// public fields
+		struct jpeg_source_mgr pub;
+		/// source stream
+		mjpeg_file_handle infile;
+		/// start of buffer
+		JOCTET * buffer;
+		/// have we gotten any data yet ?
+		boolean start_of_file;
+	} src_mgr;
+
+	typedef struct tag_dest_mgr {
+		/// public fields
+		struct jpeg_destination_mgr pub;
+		/// destination stream
+		mjpeg_file_handle outfile;
+		/// start of buffer
+		JOCTET * buffer;
+	} dest_mgr;
+
+	typedef src_mgr*			src_ptr;
+	typedef dest_mgr*			dest_ptr;
+
+	typedef struct error_mgr * error_ptr;
+
+	mjpeg_file_handle safe_fopen(const wchar_t* filename, DWORD mode, DWORD shareFlags)
 	{
-		FILE * const fp = _fsopen(filename, mode, shareFlags);
-		return fp ? boost::shared_ptr<FILE>(fp, std::fclose) : boost::shared_ptr<FILE>();
+		//FILE * const fp = _fsopen(filename, mode, shareFlags);
+		//return fp ? boost::shared_ptr<FILE>(fp, std::fclose) : boost::shared_ptr<FILE>();
+		//  | FILE_FLAG_NO_BUFFERING
+		mjpeg_file_handle handle;
+		if (handle = CreateFileW(filename, mode, shareFlags, NULL, (mode == GENERIC_WRITE ? CREATE_ALWAYS : OPEN_EXISTING), (mode == GENERIC_WRITE ? FILE_FLAG_WRITE_THROUGH : FILE_FLAG_RANDOM_ACCESS), NULL))
+		{
+			return handle;	
+		}
+		else
+		{
+			DWORD error = GetLastError();
+			printf("Error while opening file: %d (0x%x)", error, error);
+			return NULL;
+		}
 	}
 
-	void write_index_header(boost::shared_ptr<FILE> outfile_idx, const core::video_format_desc* format_desc)
+	void safe_fclose(mjpeg_file_handle file_handle)
+	{
+		CloseHandle(file_handle);
+	}
+
+	void write_index_header(mjpeg_file_handle outfile_idx, const core::video_format_desc* format_desc)
 	{
 		mjpeg_file_header	header;
 		header.magick[0] = 'O';	// Set the "magick" four bytes
@@ -57,18 +110,22 @@ namespace caspar { namespace replay {
 		header.field_mode = format_desc->field_mode;
 		header.begin_timecode = boost::posix_time::microsec_clock::universal_time();
 
-		fwrite(&header, sizeof(mjpeg_file_header), 1, outfile_idx.get());
-		fflush(outfile_idx.get());
+		/* fwrite(&header, sizeof(mjpeg_file_header), 1, outfile_idx.get());
+		fflush(outfile_idx.get()); */
+
+		DWORD written = 0;
+		WriteFile(outfile_idx, &header, sizeof(mjpeg_file_header), &written, NULL);
 	}
 
-	int read_index_header(boost::shared_ptr<FILE> infile_idx, mjpeg_file_header** header)
+	int read_index_header(mjpeg_file_handle infile_idx, mjpeg_file_header** header)
 	{
 		*header = new mjpeg_file_header();
 
-		size_t read = 0;
+		DWORD read = 0;
 		
-		read = fread(*header, sizeof(mjpeg_file_header), 1, infile_idx.get());
-		if (read != 1)
+		//read = fread(*header, sizeof(mjpeg_file_header), 1, infile_idx.get());
+		ReadFile(infile_idx, *header, sizeof(mjpeg_file_header), &read, NULL);
+		if (read != sizeof(mjpeg_file_header))
 		{
 			delete *header;
 			return 1;
@@ -79,48 +136,234 @@ namespace caspar { namespace replay {
 		}
 	}
 
-	void write_index(boost::shared_ptr<FILE> outfile_idx, long long offset)
+	void write_index(mjpeg_file_handle outfile_idx, long long offset)
 	{
-		fwrite(&offset, sizeof(long long), 1, outfile_idx.get());
-		fflush(outfile_idx.get());
+		/* fwrite(&offset, sizeof(long long), 1, outfile_idx.get());
+		fflush(outfile_idx.get()); */
+		DWORD written = 0;
+		WriteFile(outfile_idx, &offset, sizeof(long long), &written, NULL);
+
 	}
 
-	long long read_index(boost::shared_ptr<FILE> infile_idx)
+	long long read_index(mjpeg_file_handle infile_idx)
 	{
+		/* long long offset = 0;
+		int read = fread(&offset, sizeof(long long), 1, infile_idx.get()); */
 		long long offset = 0;
-		int read = fread(&offset, sizeof(long long), 1, infile_idx.get());
-		if (read != 1) offset = -1;
+		DWORD read = 0;
+		bool result = ReadFile(infile_idx, &offset, sizeof(long long), &read, NULL);
 		return offset;
 	}
 
-	int seek_index(boost::shared_ptr<FILE> infile_idx, long long frame, int origin)
+	int seek_index(mjpeg_file_handle infile_idx, long long frame, DWORD origin)
 	{
+		LARGE_INTEGER position;
+		bool result;
 		switch (origin)
 		{
-			case SEEK_CUR:
-				return _fseeki64_nolock(infile_idx.get(), frame * sizeof(long long), SEEK_CUR);
-			case SEEK_SET:
+			case FILE_CURRENT:
+				//return _fseeki64_nolock(infile_idx.get(), frame * sizeof(long long), SEEK_CUR);
+				position.QuadPart = frame * sizeof(long long);
+				result = SetFilePointerEx(infile_idx, position, NULL, FILE_CURRENT);
+			case FILE_BEGIN:
 			default:
-				return _fseeki64_nolock(infile_idx.get(), frame * sizeof(long long) + sizeof(mjpeg_file_header), SEEK_SET);
+				//return _fseeki64_nolock(infile_idx.get(), frame * sizeof(long long) + sizeof(mjpeg_file_header), SEEK_SET);
+				position.QuadPart = frame * sizeof(long long) + sizeof(mjpeg_file_header);
+				result = SetFilePointerEx(infile_idx, position, NULL, FILE_BEGIN);
+		}
+		return (result ? 0 : 1);
+	}
+
+	int seek_frame(mjpeg_file_handle infile, long long offset, DWORD origin)
+	{
+		//return _fseeki64_nolock(infile.get(), offset, origin);
+		LARGE_INTEGER position;
+		position.QuadPart = offset;
+		bool result = SetFilePointerEx(infile, position, NULL, origin);
+		return (result ? 0 : 1);
+	}
+
+	long long tell_index(mjpeg_file_handle infile_idx)
+	{
+		//return (_ftelli64_nolock(infile_idx.get()) - sizeof(mjpeg_file_header)) / sizeof(long long);
+		LARGE_INTEGER zero;
+		zero.QuadPart = 0;
+		LARGE_INTEGER position;
+		SetFilePointerEx(infile_idx, zero, &position, FILE_CURRENT);
+		return position.QuadPart;
+	}
+
+	long long tell_frame(mjpeg_file_handle  infile)
+	{
+		LARGE_INTEGER zero;
+		zero.QuadPart = 0;
+		LARGE_INTEGER position;
+		SetFilePointerEx(infile, zero, &position, FILE_CURRENT);
+		return position.QuadPart;
+	}
+
+	static void init_source (j_decompress_ptr cinfo)
+	{
+		src_ptr src = (src_ptr) cinfo->src;
+
+		src->start_of_file = TRUE;
+	}
+
+	static boolean fill_input_buffer (j_decompress_ptr cinfo)
+	{
+		src_ptr src = (src_ptr) cinfo->src;
+
+		//size_t nbytes = src->m_io->read_proc(src->buffer, 1, INPUT_BUF_SIZE, src->infile);
+
+		DWORD nbytes;
+		ReadFile(src->infile, src->buffer, VIDEO_INPUT_BUF_SIZE, &nbytes, NULL);
+
+		if (nbytes <= 0)
+		{
+			if (src->start_of_file)	/* Treat empty input file as fatal error */
+				throw(cinfo, JERR_INPUT_EMPTY);
+
+			WARNMS(cinfo, JWRN_JPEG_EOF);
+
+			/* Insert a fake EOI marker */
+
+			src->buffer[0] = (JOCTET) 0xFF;
+			src->buffer[1] = (JOCTET) JPEG_EOI;
+
+			nbytes = 2;
+		}
+
+		src->pub.next_input_byte = src->buffer;
+		src->pub.bytes_in_buffer = nbytes;
+		src->start_of_file = FALSE;
+
+		return TRUE;
+	}
+
+	static void skip_input_data (j_decompress_ptr cinfo, long num_bytes)
+	{
+		src_ptr src = (src_ptr) cinfo->src;
+
+		/* Just a dumb implementation for now.  Could use fseek() except
+		 * it doesn't work on pipes.  Not clear that being smart is worth
+		 * any trouble anyway --- large skips are infrequent.
+		*/
+
+		if (num_bytes > 0)
+		{
+			while (num_bytes > (long) src->pub.bytes_in_buffer)
+			{
+			  num_bytes -= (long) src->pub.bytes_in_buffer;
+
+			  (void) fill_input_buffer(cinfo);
+
+			  /* note we assume that fill_input_buffer will never return FALSE,
+			   * so suspension need not be handled.
+			   */
+			}
+
+			src->pub.next_input_byte += (size_t) num_bytes;
+			src->pub.bytes_in_buffer -= (size_t) num_bytes;
 		}
 	}
 
-	int seek_frame(boost::shared_ptr<FILE> infile, long long offset, int origin)
+	static void term_source (j_decompress_ptr cinfo)
 	{
-		return _fseeki64_nolock(infile.get(), offset, origin);
+		// Nothing to actually do here
 	}
 
-	long long tell_index(boost::shared_ptr<FILE> infile_idx)
+	static void jpeg_windows_src (j_decompress_ptr cinfo, mjpeg_file_handle file)
 	{
-		return (_ftelli64_nolock(infile_idx.get()) - sizeof(mjpeg_file_header)) / sizeof(long long);
+		src_ptr src;
+
+		// allocate memory for the buffer. is released automatically in the end
+
+		if (cinfo->src == NULL)
+		{
+			cinfo->src = (struct jpeg_source_mgr *) (*cinfo->mem->alloc_small)
+				((j_common_ptr) cinfo, JPOOL_PERMANENT, sizeof(src_mgr));
+
+			src = (src_ptr) cinfo->src;
+
+			src->buffer = (JOCTET *) (*cinfo->mem->alloc_small)
+				((j_common_ptr) cinfo, JPOOL_PERMANENT, VIDEO_INPUT_BUF_SIZE * sizeof(JOCTET));
+		}
+
+		// initialize the jpeg pointer struct with pointers to functions
+
+		src = (src_ptr) cinfo->src;
+		src->pub.init_source = init_source;
+		src->pub.fill_input_buffer = fill_input_buffer;
+		src->pub.skip_input_data = skip_input_data;
+		src->pub.resync_to_restart = jpeg_resync_to_restart; // use default method 
+		src->pub.term_source = term_source;
+		src->infile = file;
+		src->pub.bytes_in_buffer = 0;		// forces fill_input_buffer on first read 
+		src->pub.next_input_byte = NULL;	// until buffer loaded 
 	}
 
-	struct error_mgr {
-		struct jpeg_error_mgr pub;	/* "public" fields */
-		jmp_buf setjmp_buffer;	/* for return to caller */
-	}; 
+	static void init_destination (j_compress_ptr cinfo)
+	{
+		dest_ptr dest = (dest_ptr) cinfo->dest;
 
-	typedef struct error_mgr * error_ptr;
+		dest->buffer = (JOCTET *)
+		  (*cinfo->mem->alloc_small) ((j_common_ptr) cinfo, JPOOL_IMAGE,
+					  VIDEO_OUTPUT_BUF_SIZE * sizeof(JOCTET));
+
+		dest->pub.next_output_byte = dest->buffer;
+		dest->pub.free_in_buffer = VIDEO_OUTPUT_BUF_SIZE;
+	}
+
+	static void term_destination (j_compress_ptr cinfo)
+	{
+		dest_ptr dest = (dest_ptr) cinfo->dest;
+
+		DWORD datacount = VIDEO_OUTPUT_BUF_SIZE - dest->pub.free_in_buffer;
+
+		// write any data remaining in the buffer
+
+		if (datacount > 0)
+		{
+			DWORD written = 0;
+			bool success = WriteFile(dest->outfile, dest->buffer, datacount, &written, NULL);
+
+			if (!success)
+			  throw(cinfo, JERR_FILE_WRITE);
+		}
+	}
+
+	static boolean empty_output_buffer (j_compress_ptr cinfo)
+	{
+		dest_ptr dest = (dest_ptr) cinfo->dest;
+
+		DWORD written = 0;
+		bool success = WriteFile(dest->outfile, dest->buffer, VIDEO_OUTPUT_BUF_SIZE, &written, NULL);
+
+		if (!success)
+			throw(cinfo, JERR_FILE_WRITE);
+
+		dest->pub.next_output_byte = dest->buffer;
+		dest->pub.free_in_buffer = VIDEO_OUTPUT_BUF_SIZE;
+
+		return TRUE;
+	}
+
+	static void jpeg_windows_dest(j_compress_ptr cinfo, mjpeg_file_handle file)
+	{
+		dest_ptr dest;
+
+		if (cinfo->dest == NULL)
+		{
+			cinfo->dest = (struct jpeg_destination_mgr *)(*cinfo->mem->alloc_small)
+				((j_common_ptr) cinfo, JPOOL_PERMANENT, sizeof(dest_mgr));
+		}
+
+		dest = (dest_ptr) cinfo->dest;
+		dest->pub.init_destination = init_destination;
+		dest->pub.empty_output_buffer = empty_output_buffer;
+		dest->pub.term_destination = term_destination;
+		dest->outfile = file;
+	}
 
 	void error_exit(j_common_ptr cinfo)
 	{
@@ -133,7 +376,7 @@ namespace caspar { namespace replay {
 		longjmp(myerr->setjmp_buffer, 1);
 	} 
 
-	size_t read_frame(boost::shared_ptr<FILE> infile, size_t* width, size_t* height, mmx_uint8_t** image)
+	size_t read_frame(mjpeg_file_handle infile, size_t* width, size_t* height, mmx_uint8_t** image)
 	{
 		struct jpeg_decompress_struct cinfo;
 
@@ -158,7 +401,8 @@ namespace caspar { namespace replay {
 #pragma warning(default: 4611)
 		jpeg_create_decompress(&cinfo);
 
-		jpeg_stdio_src(&cinfo, infile.get());
+		//jpeg_stdio_src(&cinfo, infile.get());
+		jpeg_windows_src(&cinfo, infile);
 
 		(void) jpeg_read_header(&cinfo, TRUE); // We ignore the return value - all errors will result in exiting as per setjmp error handler
 
@@ -192,9 +436,10 @@ namespace caspar { namespace replay {
 	}
 
 #pragma warning(disable:4267)
-	long long write_frame(boost::shared_ptr<FILE> outfile, size_t width, size_t height, mmx_uint8_t* image, short quality)
+	long long write_frame(mjpeg_file_handle outfile, size_t width, size_t height, mmx_uint8_t* image, short quality)
 	{
-		long long start_position = _ftelli64(outfile.get());
+		//long long start_position = _ftelli64(outfile.get());
+		long long start_position = tell_frame(outfile);
 
 		// JPEG Compression Parameters
 		struct jpeg_compress_struct cinfo;
@@ -207,7 +452,8 @@ namespace caspar { namespace replay {
 		cinfo.err = jpeg_std_error(&jerr);
 		jpeg_create_compress(&cinfo);
 
-		jpeg_stdio_dest(&cinfo, outfile.get());
+		//jpeg_stdio_dest(&cinfo, outfile.get());
+		jpeg_windows_dest(&cinfo, outfile);
 
 		cinfo.image_width = width;
 		cinfo.image_height = height;
@@ -234,14 +480,12 @@ namespace caspar { namespace replay {
 			row_pointer[0] = (JSAMPROW)buf;
 			(void) jpeg_write_scanlines(&cinfo, row_pointer, 1);
 		}
-				
+		
 		jpeg_finish_compress(&cinfo);
 				
 		jpeg_destroy_compress(&cinfo); 
 
 		delete buf;
-
-		fflush(outfile.get());
 
 		return start_position;
 	}
