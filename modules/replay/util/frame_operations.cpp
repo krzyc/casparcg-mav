@@ -22,14 +22,17 @@
 
 #include "frame_operations.h"
 
+#include <asmlib.h>
+
 #include <stdint.h>
 #include <memory>
 #include <tmmintrin.h>
 
 #include <tbb/parallel_for.h>
 
-#define OPTIMIZE_RGB_TO_BGRA
-#define OPTIMIZE_BGRA_TO_RGB
+//#define OPTIMIZE_RGB_TO_BGRA
+//#define OPTIMIZE_BGRA_TO_RGB
+#define USE_PARALLEL_FOR
 
 namespace caspar { namespace replay {
 
@@ -150,40 +153,49 @@ l1:
 	void split_frame_to_fields(const mmx_uint8_t* src, mmx_uint8_t* dst1, mmx_uint8_t* dst2, size_t width, size_t height, size_t stride)
 	{
 		size_t full_row = width * stride;
+#ifdef USE_PARALLEL_FOR
 		tbb::parallel_for(tbb::blocked_range<size_t>(0, height/2), [=](const tbb::blocked_range<size_t>& r)
 		{
 			for (auto i = r.begin(); i != r.end(); ++i)
 			{
-				memcpy((dst1 + i * full_row), (src + i * 2 * full_row), full_row);
-				memcpy((dst2 + i * full_row), (src + (i * 2 + 1) * full_row), full_row);
+				A_memcpy((dst1 + i * full_row), (src + i * 2 * full_row), full_row);
+				A_memcpy((dst2 + i * full_row), (src + (i * 2 + 1) * full_row), full_row);
 			}
 		});
+#else
+		for (auto i = 0; i != height/2; ++i)
+		{
+				memcpy((dst1 + i * full_row), (src + i * 2 * full_row), full_row);
+				memcpy((dst2 + i * full_row), (src + (i * 2 + 1) * full_row), full_row);
+		}
+#endif
 	}
 
 	void interlace_fields(const mmx_uint8_t* src1, const mmx_uint8_t* src2, mmx_uint8_t* dst, size_t width, size_t height, size_t stride)
 	{
 		size_t full_row = width * stride;
-		tbb::parallel_for(tbb::blocked_range<size_t>(0, height/2), [=](const tbb::blocked_range<size_t>& r)
+#ifdef USE_PARALLEL_FOR
+ 		tbb::parallel_for(tbb::blocked_range<size_t>(0, height/2), [=](const tbb::blocked_range<size_t>& r)
 		{
 			for (auto i = r.begin(); i != r.end(); ++i)
 			{
-				memcpy((dst + i * 2 * full_row), (src1 + i * full_row), full_row);
-				memcpy((dst + (i * 2 + 1) * full_row), (src2 + i * full_row), full_row);
+				A_memcpy((dst + i * 2 * full_row), (src1 + i * full_row), full_row);
+				A_memcpy((dst + (i * 2 + 1) * full_row), (src2 + i * full_row), full_row);
 			}
 		});
+#else
+		for (auto i = 0; i != height/2; ++i)
+		{
+			memcpy((dst + i * 2 * full_row), (src1 + i * full_row), full_row);
+			memcpy((dst + (i * 2 + 1) * full_row), (src2 + i * full_row), full_row);
+		}
+#endif
 	}
 	
 	void field_double(const mmx_uint8_t* src, mmx_uint8_t* dst, size_t width, size_t height, size_t stride)
 	{
 		size_t full_row = width * stride;
-		/* tbb::parallel_for(tbb::blocked_range<size_t>(0, height/2), [=](const tbb::blocked_range<size_t>& r)
-		{
-			for (auto i = r.begin(); i != r.end(); ++i)
-			{
-				memcpy((dst + i * 2 * full_row), (src + i * full_row), full_row);
-				memcpy((dst + (i * 2 + 1) * full_row), (src + i  * full_row), full_row);
-			}
-		}); */
+#ifdef USE_PARALLEL_FOR
 		tbb::parallel_for(tbb::blocked_range<size_t>(0, height/2 - 1), [=](const tbb::blocked_range<size_t>& r)
 		{
 			for (auto i = r.begin(); i != r.end(); ++i)
@@ -195,6 +207,16 @@ l1:
 				}
 			}
 		});
+#else
+		for (auto i = 0; i != height/2; ++i)
+		{
+			for (uint32_t j = 0; j < full_row; ++j)
+			{
+				dst[i * 2 * full_row + j] = src[i * full_row + j];
+				dst[(i * 2 + 1) * full_row + j] = (src[i * full_row + j] >> 1) + (src[(i + 1) * full_row + j] >> 1);
+			}
+		}
+#endif
 	}
 
 #pragma warning(disable:4309 4244)
@@ -203,6 +225,7 @@ l1:
 	{
 		uint32_t full_size = width * height * stride;
 		uint16_t level_16 = (uint16_t)level;
+#ifdef USE_PARALLEL_FOR
 		tbb::parallel_for(tbb::blocked_range<size_t>(0, full_size), [=](const tbb::blocked_range<size_t>& r)
 		{
 			for (auto i = r.begin(); i != r.end(); i++)
@@ -210,6 +233,12 @@ l1:
 				dst[i] = (uint8_t)((((uint16_t)src1[i] * level_16) >> 6) + (((uint16_t)src2[i] * (64 - level_16)) >> 6));
 			}
 		});
+#else
+		for (auto i = 0; i != full_size; i++)
+		{
+			dst[i] = (uint8_t)((((uint16_t)src1[i] * level_16) >> 6) + (((uint16_t)src2[i] * (64 - level_16)) >> 6));
+		}
+#endif
 	}
 #pragma warning(default:4309)
 }}

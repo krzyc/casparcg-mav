@@ -23,6 +23,8 @@
 
 #include "replay_consumer.h"
 
+#include <asmlib.h>
+
 #include <common/executor.h>
 #include <common/except.h>
 #include <common/env.h>
@@ -75,6 +77,7 @@ struct replay_consumer : boost::noncopyable
 	bool									file_open_;
 	executor								encode_executor_;
 	const spl::shared_ptr<diagnostics::graph>		graph_;
+	monitor::basic_subject					event_subject_;
 
 #define REPLAY_FRAME_BUFFER					16
 #define REPLAY_JPEG_QUALITY					95
