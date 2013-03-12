@@ -51,6 +51,8 @@
 #include <setjmp.h>
 #include <vector>
 
+#include <Windows.h>
+
 namespace caspar { namespace replay {
 
 struct option
@@ -72,8 +74,8 @@ struct replay_consumer : boost::noncopyable
 	tbb::atomic<uint64_t>					framenum_;
 	int16_t									quality_;
 	//boost::mutex*							file_mutex_;
-	boost::shared_ptr<FILE>					output_file_;
-	boost::shared_ptr<FILE>					output_index_file_;
+	mjpeg_file_handle						output_file_;
+	mjpeg_file_handle						output_index_file_;
 	bool									file_open_;
 	executor								encode_executor_;
 	const spl::shared_ptr<diagnostics::graph>		graph_;
@@ -104,7 +106,7 @@ public:
 		//file_mutex_ = new boost::mutex();
 		file_open_ = false;
 
-		output_file_ = safe_fopen(u8(env::media_folder() + filename_ + L".MAV").c_str(), "wb", _SH_DENYWR);
+		output_file_ = safe_fopen((env::media_folder() + filename_ + L".MAV").c_str(), GENERIC_WRITE, FILE_SHARE_READ);
 		if (output_file_ == NULL)
 		{
 			CASPAR_LOG(error) << print() <<  L" Can't open file " << filename_ << L".MAV for writing";
@@ -112,11 +114,11 @@ public:
 		}
 		else
 		{
-			output_index_file_ = safe_fopen(u8(env::media_folder() + filename_ + L".IDX").c_str(), "wb", _SH_DENYWR);
+			output_index_file_ = safe_fopen((env::media_folder() + filename_ + L".IDX").c_str(), GENERIC_WRITE, FILE_SHARE_READ);
 			if (output_index_file_ == NULL)
 			{
 				CASPAR_LOG(error) << print() <<  L" Can't open index file " << filename_ << L".IDX for writing";
-				fclose(output_file_.get());
+				safe_fclose(output_file_);
 				return;
 			}
 			else
@@ -244,7 +246,17 @@ public:
 	{
 		encode_executor_.wait();
 
-		CASPAR_LOG(info) << print() << L" Successfully Uninitialized.";	
+		if (output_file_ != NULL)
+		{
+			safe_fclose(output_file_);
+		}
+
+		if (output_index_file_ != NULL)
+		{
+			safe_fclose(output_index_file_);
+		}
+
+		CASPAR_LOG(info) << L"replay_consumer Successfully Uninitialized.";	
 	}
 };
 

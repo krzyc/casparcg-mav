@@ -55,6 +55,8 @@
 #include <sys/stat.h>
 #include <math.h>
 
+#include <Windows.h>
+
 #include <core/producer/frame_producer.h>
 #include <core/frame/frame.h>
 #include <core/frame/draw_frame.h>
@@ -73,9 +75,9 @@ struct replay_producer : public core::frame_producer_base
 {	
 	const std::wstring						filename_;
 	core::draw_frame						frame_;
-	boost::shared_ptr<FILE>					in_file_;
-	boost::shared_ptr<FILE>					in_idx_file_;
-	boost::shared_ptr<mjpeg_file_header>	index_header_;
+	mjpeg_file_handle						in_file_;
+	mjpeg_file_handle						in_idx_file_;
+	spl::shared_ptr<mjpeg_file_header>		index_header_;
 	spl::shared_ptr<core::frame_factory>	frame_factory_;
 	tbb::atomic<uint64_t>					framenum_;
 	tbb::atomic<uint64_t>					first_framenum_;
@@ -99,23 +101,24 @@ struct replay_producer : public core::frame_producer_base
 		, frame_(core::draw_frame::empty())
 		, frame_factory_(frame_factory)
 	{
-		in_file_ = safe_fopen(u8(filename_).c_str(), "rb", _SH_DENYNO);
+		//in_file_ = safe_fopen(u8(filename_).c_str(), "rb", _SH_DENYNO);
+		in_file_ = safe_fopen(filename_.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE);
 		if (in_file_ != NULL)
 		{
-			_off_t size = 0;
+			uintmax_t size = 0;
 			struct stat st;
-			in_idx_file_ = safe_fopen(u8(boost::filesystem::wpath(filename_).replace_extension(L".idx").string()).c_str(), "rb", _SH_DENYNO);
+			in_idx_file_ = safe_fopen(boost::filesystem::wpath(filename_).replace_extension(L".idx").c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE);
 			if (in_idx_file_ != NULL)
 			{
 				while (size == 0)
 				{
-					stat(u8(boost::filesystem::wpath(filename_).replace_extension(L".idx").string()).c_str(), &st);
-					size = st.st_size;
+					size = boost::filesystem::file_size(boost::filesystem::wpath(filename_).replace_extension(L".idx").string());
 
 					if (size > 0) {
 						mjpeg_file_header* header;
 						read_index_header(in_idx_file_, &header);
-						index_header_ = boost::shared_ptr<mjpeg_file_header>(header);
+						//index_header_ = boost::shared_ptr<mjpeg_file_header>(header);
+						index_header_ = spl::make_shared<mjpeg_file_header>(*header);
 						CASPAR_LOG(info) << print() << L" File starts at: " << boost::posix_time::to_iso_wstring(index_header_->begin_timecode);
 
 						if (index_header_->field_mode == caspar::core::field_mode::progressive)
@@ -281,17 +284,17 @@ struct replay_producer : public core::frame_producer_base
 		if (sign == 0)
 		{
 			framenum_ = frame_pos;
-			seek_index(in_idx_file_, frame_pos, SEEK_SET);
+			seek_index(in_idx_file_, frame_pos, FILE_BEGIN);
 		}
 		else if (sign == -2)
 		{
 			framenum_ = length_index() - frame_pos - 4;
-			seek_index(in_idx_file_, framenum_, SEEK_SET);
+			seek_index(in_idx_file_, framenum_, FILE_CURRENT);
 		}
 		else
 		{
 			framenum_ = framenum_ + (sign * frame_pos);
-			seek_index(in_idx_file_, (frame_pos) * sign, SEEK_CUR);
+			seek_index(in_idx_file_, (frame_pos) * sign, FILE_BEGIN);
 		}
 		first_framenum_ = framenum_;
 		seeked_ = true;
@@ -320,14 +323,14 @@ struct replay_producer : public core::frame_producer_base
 		if ((reverse_) && (framenum_ > 0))
 		{
 			framenum_ -= -(frame_multiplier_ > 1 ? frame_multiplier_ : 1);
-			seek_index(in_idx_file_, -1 - (frame_multiplier_ > 1 ? frame_multiplier_ : 1), SEEK_CUR);
+			seek_index(in_idx_file_, -1 - (frame_multiplier_ > 1 ? frame_multiplier_ : 1), FILE_CURRENT);
 		}
 		else
 		{
 			framenum_ += (frame_multiplier_ > 1 ? frame_multiplier_ : 1);
 			if (frame_multiplier_ > 1)
 			{
-				seek_index(in_idx_file_, frame_multiplier_, SEEK_CUR);
+				seek_index(in_idx_file_, frame_multiplier_, FILE_CURRENT);
 			}
 		}
 	}
@@ -424,7 +427,7 @@ struct replay_producer : public core::frame_producer_base
 
 				move_to_next_frame();
 
-				seek_frame(in_file_, field1_pos, SEEK_SET);
+				seek_frame(in_file_, field1_pos, FILE_BEGIN);
 
 				mmx_uint8_t* field1 = NULL;
 				mmx_uint8_t* field2 = NULL;
@@ -439,7 +442,7 @@ struct replay_producer : public core::frame_producer_base
 
 					move_to_next_frame();
 
-					seek_frame(in_file_, field2_pos, SEEK_SET);
+					seek_frame(in_file_, field2_pos, FILE_BEGIN);
 
 					size_t field2_size = read_frame(in_file_, &field1_width, &field1_height, &field2);
 
@@ -510,7 +513,7 @@ struct replay_producer : public core::frame_producer_base
 
 				move_to_next_frame();
 
-				seek_frame(in_file_, field1_pos, SEEK_SET);
+				seek_frame(in_file_, field1_pos, FILE_BEGIN);
 
 				mmx_uint8_t* field1 = NULL;
 				mmx_uint8_t* field2 = NULL;
@@ -525,7 +528,7 @@ struct replay_producer : public core::frame_producer_base
 
 					move_to_next_frame();
 
-					seek_frame(in_file_, field2_pos, SEEK_SET);
+					seek_frame(in_file_, field2_pos, FILE_BEGIN);
 
 				
 					size_t field2_size = read_frame(in_file_, &field1_width, &field1_height, &field2);
@@ -596,7 +599,7 @@ struct replay_producer : public core::frame_producer_base
 
 		move_to_next_frame();
 
-		seek_frame(in_file_, field1_pos, SEEK_SET);
+		seek_frame(in_file_, field1_pos, FILE_BEGIN);
 
 		mmx_uint8_t* field1 = NULL;
 		mmx_uint8_t* field2 = NULL;
@@ -640,7 +643,7 @@ struct replay_producer : public core::frame_producer_base
 
 			move_to_next_frame();
 
-			seek_frame(in_file_, field2_pos, SEEK_SET);
+			seek_frame(in_file_, field2_pos, FILE_BEGIN);
 
 			size_t field2_size = read_frame(in_file_, &field1_width, &field1_height, &field2);
 
@@ -715,6 +718,18 @@ struct replay_producer : public core::frame_producer_base
 		info.add(L"play-head", framenum_);
 		info.add(L"speed", speed_);
 		return info;
+	}
+
+	~replay_producer()
+	{
+		if (in_file_ != NULL)
+		{
+			safe_fclose(in_file_);
+		}
+		if (in_idx_file_ != NULL)
+		{
+			safe_fclose(in_idx_file_);
+		}
 	}
 };
 

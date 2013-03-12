@@ -115,9 +115,9 @@
     <_ProjectFileVersion>10.0.30319.1</_ProjectFileVersion>
     <IntDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)tmp\$(Configuration)\</IntDir>
     <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)tmp\$(Configuration)\</IntDir>
-    <IncludePath Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">..\dependencies64\boost\;..\dependencies64\ffmpeg\include\;..\dependencies64\glew\include;..\dependencies64\sfml\include\;..\dependencies64\tbb\include\;$(IncludePath)</IncludePath>
+    <IncludePath Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">..\dependencies64\boost\;..\dependencies64\ffmpeg\include\;..\dependencies64\glew\include;..\dependencies64\sfml\include\;..\dependencies64\tbb\include\;..\dependencies64\libjpeg-turbo64\include\$(IncludePath)</IncludePath>
     <IncludePath Condition="'$(Configuration)|$(Platform)'=='Release|x64'">..\dependencies64\boost\;..\dependencies64\ffmpeg\include\;..\dependencies64\glew\include;..\dependencies64\sfml\include\;..\dependencies64\tbb\include\;$(IncludePath)</IncludePath>
-    <LibraryPath Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">..\dependencies64\boost\stage\lib;..\dependencies64\ffmpeg\lib\;..\dependencies64\glew\lib;..\dependencies64\sfml\lib\;..\dependencies64\tbb\lib\;..\dependencies64\freeimage\lib\;..\dependencies64\sfml\extlibs\lib\;..\dependencies64\openal\lib\;..\dependencies64\asmlib\;$(LibraryPath)</LibraryPath>
+    <LibraryPath Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">..\dependencies64\boost\stage\lib;..\dependencies64\ffmpeg\lib\;..\dependencies64\glew\lib;..\dependencies64\sfml\lib\;..\dependencies64\tbb\lib\;..\dependencies64\freeimage\lib\;..\dependencies64\sfml\extlibs\lib\;..\dependencies64\openal\lib\;..\dependencies64\asmlib\;..\dependencies64\libjpeg-turbo64\lib\;$(LibraryPath)</LibraryPath>
     <LibraryPath Condition="'$(Configuration)|$(Platform)'=='Release|x64'">..\dependencies64\boost\stage\lib;..\dependencies64\ffmpeg\lib\;..\dependencies64\glew\lib;..\dependencies64\sfml\lib\;..\dependencies64\tbb\lib\;..\dependencies64\freeimage\lib\;..\dependencies64\sfml\extlibs\lib\;..\dependencies64\openal\lib\;..\dependencies64\asmlib\;$(LibraryPath)</LibraryPath>
     <OutDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)bin\$(Configuration)\</OutDir>
     <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)bin\$(Configuration)\</OutDir>
@@ -156,7 +156,7 @@
       <ForcedIncludeFiles>common/compiler/vs/disable_silly_warnings.h</ForcedIncludeFiles>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>alibcof64.lib;sfml-system-d.lib;sfml-window-d.lib;sfml-graphics-d.lib;sfml-audio-d.lib;Winmm.lib;Ws2_32.lib;avformat.lib;avcodec.lib;avutil.lib;avfilter.lib;swscale.lib;swresample.lib;tbb.lib;OpenGL32.lib;FreeImaged.lib;glew32.lib;freetype248_D.lib;openal32.lib</AdditionalDependencies>
+      <AdditionalDependencies>jpeg.lib;alibcof64.lib;sfml-system-d.lib;sfml-window-d.lib;sfml-graphics-d.lib;sfml-audio-d.lib;Winmm.lib;Ws2_32.lib;avformat.lib;avcodec.lib;avutil.lib;avfilter.lib;swscale.lib;swresample.lib;tbb.lib;OpenGL32.lib;FreeImaged.lib;glew32.lib;freetype248_D.lib;openal32.lib</AdditionalDependencies>
       <Version>
       </Version>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
@@ -174,6 +174,7 @@
       <MapExports>false</MapExports>
       <IgnoreAllDefaultLibraries>
       </IgnoreAllDefaultLibraries>
+      <ShowProgress>LinkVerbose</ShowProgress>
     </Link>
     <PostBuildEvent>
       <Command>copy "$(SolutionDir)dependencies64\ffmpeg\bin\*.dll" "$(OutDir)"
@@ -181,6 +182,7 @@ copy "$(SolutionDir)dependencies64\tbb\bin\*.dll" "$(OutDir)"
 copy "$(SolutionDir)dependencies64\glew\bin\*.dll" "$(OutDir)"
 copy "$(SolutionDir)dependencies64\freeimage\bin\*.dll" "$(OutDir)"
 copy "$(SolutionDir)dependencies64\openal\bin\*.dll" "$(OutDir)"
+copy "$(SolutionDir)dependencies64\libjpeg-turbo64\bin\*.dll" "$(OutDir)"
 copy "$(ProjectDir)casparcg.config" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
