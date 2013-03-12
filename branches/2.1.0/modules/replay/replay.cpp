@@ -42,7 +42,7 @@ void init()
 
 std::wstring get_version()
 {
-	return L"0.1-beta";
+	return L"0.2-beta";
 }
 
 }}

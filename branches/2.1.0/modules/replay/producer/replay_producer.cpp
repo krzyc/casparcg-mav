@@ -29,11 +29,14 @@
 
 #include "replay_producer.h"
 
+#include <asmlib.h>
+
 #include <core/video_format.h>
 
 #include <common/env.h>
 #include <common/log.h>
 #include <common/except.h>
+#include <common/param.h>
 #include <common/diagnostics/graph.h>
 #include <common/utf.h>
 
@@ -62,6 +65,8 @@
 #include "../util/frame_operations.h"
 #include "../util/file_operations.h"
 
+using namespace caspar::core;
+
 namespace caspar { namespace replay {
 
 struct replay_producer : public core::frame_producer_base
@@ -87,7 +92,7 @@ struct replay_producer : public core::frame_producer_base
 	bool									reverse_;
 	bool									seeked_;
 	const spl::shared_ptr<diagnostics::graph>		graph_;
-	monitor::basic_subject	event_subject_;
+	monitor::basic_subject					event_subject_;
 
 	explicit replay_producer(const spl::shared_ptr<core::frame_factory>& frame_factory, const std::wstring& filename, const int sign, const long long start_frame, const long long last_frame, const float start_speed) 
 		: filename_(filename)
@@ -182,12 +187,14 @@ struct replay_producer : public core::frame_producer_base
 		auto frame = frame_factory_->create_frame(this, desc);
 		if (!drop_first_line)
 		{
-			std::copy_n(frame_data, size, frame.image_data().begin());
+			//std::copy_n(frame_data, size, frame.image_data().begin());
+			A_memcpy(frame_data, frame.image_data().begin(), size);
 		}
 		else
 		{
 			size_t line = width * 4;
-			std::copy_n(frame_data, size - line, frame.image_data().begin() + line);
+			//std::copy_n(frame_data, size - line, frame.image_data().begin() + line);
+			A_memcpy(frame_data, frame.image_data().begin() + line, size - line);
 		}
 		frame_ = core::draw_frame(std::move(frame));
 		return frame_;
@@ -713,7 +720,7 @@ struct replay_producer : public core::frame_producer_base
 
 spl::shared_ptr<core::frame_producer> create_producer(const spl::shared_ptr<core::frame_factory>& frame_factory, const core::video_format_desc& format_desc, const std::vector<std::wstring>& params)
 {
-	static const std::vector<std::wstring> extensions = boost::assign::list_of(L"mav");
+	static const std::vector<std::wstring> extensions = boost::assign::list_of(L".mav");
 	std::wstring filename = env::media_folder() + L"\\" + params[0];
 	
 	auto ext = std::find_if(extensions.begin(), extensions.end(), [&](const std::wstring& ex) -> bool
@@ -728,6 +735,7 @@ spl::shared_ptr<core::frame_producer> create_producer(const spl::shared_ptr<core
 	long long start_frame = 0;
 	long long last_frame = 0;
 	float start_speed = 1.0f;
+
 	if (params.size() >= 3) {
 		for (uint16_t i=0; i<params.size(); i++) {
 			if (params[i] == L"SEEK")
@@ -777,7 +785,7 @@ spl::shared_ptr<core::frame_producer> create_producer(const spl::shared_ptr<core
 		}
 	}
 
-	return spl::make_shared<replay_producer>(frame_factory, filename + L"." + *ext, sign, start_frame, last_frame, start_speed);
+	return create_destroy_proxy(spl::make_shared_ptr<replay_producer>(spl::make_shared<replay_producer>(frame_factory, filename + *ext, sign, start_frame, last_frame, start_speed)));
 }
 
 
