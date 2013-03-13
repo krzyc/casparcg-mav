@@ -101,7 +101,16 @@ struct replay_producer : public core::frame_producer_base
 		, frame_(core::draw_frame::empty())
 		, frame_factory_(frame_factory)
 	{
-		//in_file_ = safe_fopen(u8(filename_).c_str(), "rb", _SH_DENYNO);
+		result_framenum_ = 0;
+		framenum_ = 0;
+		last_framenum_ = 0;
+		first_framenum_ = 0;
+		left_of_last_field_ = 0;
+
+		last_field_ = NULL;
+
+		seeked_ = false;
+
 		in_file_ = safe_fopen(filename_.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE);
 		if (in_file_ != NULL)
 		{
@@ -119,6 +128,9 @@ struct replay_producer : public core::frame_producer_base
 						read_index_header(in_idx_file_, &header);
 						//index_header_ = boost::shared_ptr<mjpeg_file_header>(header);
 						index_header_ = spl::make_shared<mjpeg_file_header>(*header);
+
+						set_playback_speed(start_speed);
+
 						CASPAR_LOG(info) << print() << L" File starts at: " << boost::posix_time::to_iso_wstring(index_header_->begin_timecode);
 
 						if (index_header_->field_mode == caspar::core::field_mode::progressive)
@@ -129,17 +141,6 @@ struct replay_producer : public core::frame_producer_base
 						{
 							interlaced_ = true;
 						}
-
-						set_playback_speed(start_speed);
-						result_framenum_ = 0;
-						framenum_ = 0;
-						last_framenum_ = 0;
-						first_framenum_ = 0;
-						left_of_last_field_ = 0;
-
-						last_field_ = NULL;
-
-						seeked_ = false;
 
 						if (start_frame > 0)
 						{

@@ -73,11 +73,11 @@
     <IntDir Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">$(ProjectDir)tmp\$(Configuration)\</IntDir>
     <IntDir Condition="'$(Configuration)|$(Platform)'=='Develop|x64'">$(ProjectDir)tmp\$(Configuration)\</IntDir>
     <IncludePath Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">..\..\;..\..\dependencies64\asmlib\;..\..\dependencies64\boost\;..\..\dependencies64\tbb\include\;..\..\dependencies64\libjpeg-turbo64\include;$(IncludePath)</IncludePath>
-    <IncludePath Condition="'$(Configuration)|$(Platform)'=='Release|x64'">..\..\;..\..\dependencies\boost\;..\..\dependencies\FreeImage\Dist\;..\..\dependencies\tbb\include\;..\..\dependencies\libjpeg-turbo\include;$(IncludePath)</IncludePath>
+    <IncludePath Condition="'$(Configuration)|$(Platform)'=='Release|x64'">..\..\;..\..\dependencies64\asmlib\;..\..\dependencies64\boost\;..\..\dependencies64\tbb\include\;..\..\dependencies64\libjpeg-turbo64\include;$(IncludePath)</IncludePath>
     <IncludePath Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">..\..\;..\..\dependencies\boost\;..\..\dependencies\FreeImage\Dist\;..\..\dependencies\tbb\include\;$(IncludePath)</IncludePath>
     <IncludePath Condition="'$(Configuration)|$(Platform)'=='Develop|x64'">..\..\;..\..\dependencies\boost\;..\..\dependencies\FreeImage\Dist\;..\..\dependencies\tbb\include\;$(IncludePath)</IncludePath>
     <LibraryPath Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(VCInstallDir)lib\amd64;$(VCInstallDir)atlmfc\lib\amd64;$(WindowsSdkDir)lib\x64;..\..\dependencies64\libjpeg-turbo64\lib\;..\..\dependencies64\boost\stage\lib\;..\..\dependencies64\ffmpeg\lib\;..\..\dependencies64\tbb\lib;..\..\;..\..\dependencies64\asmlib\;$(LibraryPath)</LibraryPath>
-    <LibraryPath Condition="'$(Configuration)|$(Platform)'=='Release|x64'">..\..\dependencies\libjpeg-turbo\lib\;..\..\dependencies\boost\stage\lib\;..\..\dependencies\ffmpeg 0.8\lib\;..\..\dependencies\tbb\lib\ia32\vc10\;$(LibraryPath)</LibraryPath>
+    <LibraryPath Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(VCInstallDir)lib\amd64;$(VCInstallDir)atlmfc\lib\amd64;$(WindowsSdkDir)lib\x64;..\..\dependencies64\libjpeg-turbo64\lib\;..\..\dependencies64\boost\stage\lib\;..\..\dependencies64\ffmpeg\lib\;..\..\dependencies64\tbb\lib;..\..\;..\..\dependencies64\asmlib\;$(LibraryPath)</LibraryPath>
     <LibraryPath Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">..\..\dependencies\boost\stage\lib\;..\..\dependencies\ffmpeg 0.8\lib\;..\..\dependencies\tbb\lib\ia32\vc10\;$(LibraryPath)</LibraryPath>
     <LibraryPath Condition="'$(Configuration)|$(Platform)'=='Develop|x64'">..\..\dependencies\boost\stage\lib\;..\..\dependencies\ffmpeg 0.8\lib\;..\..\dependencies\tbb\lib\ia32\vc10\;$(LibraryPath)</LibraryPath>
     <OutDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)bin\$(Configuration)\</OutDir>
@@ -143,7 +143,7 @@
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <PreprocessorDefinitions>_SCL_SECURE_NO_WARNINGS;TBB_USE_CAPTURED_EXCEPTION=0;NDEBUG;_VC80_UPGRADE=0x0710;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <WholeProgramOptimization>true</WholeProgramOptimization>
-      <TreatWarningAsError>true</TreatWarningAsError>
+      <TreatWarningAsError>false</TreatWarningAsError>
       <OmitFramePointers>true</OmitFramePointers>
       <FloatingPointModel>Fast</FloatingPointModel>
       <ForcedIncludeFiles>common/compiler/vs/disable_silly_warnings.h</ForcedIncludeFiles>
