@@ -115,7 +115,7 @@ struct replay_producer : public core::frame_producer_base
 		if (in_file_ != NULL)
 		{
 			uintmax_t size = 0;
-			struct stat st;
+
 			in_idx_file_ = safe_fopen(boost::filesystem::wpath(filename_).replace_extension(L".idx").c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE);
 			if (in_idx_file_ != NULL)
 			{
@@ -191,14 +191,14 @@ struct replay_producer : public core::frame_producer_base
 		auto frame = frame_factory_->create_frame(this, desc);
 		if (!drop_first_line)
 		{
-			//std::copy_n(frame_data, size, frame.image_data().begin());
-			A_memcpy(frame_data, frame.image_data().begin(), size);
+			std::copy_n(frame_data, size, frame.image_data().begin());
+			//A_memcpy(frame_data, frame.image_data().begin(), size);
 		}
 		else
 		{
 			size_t line = width * 4;
-			//std::copy_n(frame_data, size - line, frame.image_data().begin() + line);
-			A_memcpy(frame_data, frame.image_data().begin() + line, size - line);
+			std::copy_n(frame_data, size - line, frame.image_data().begin() + line);
+			//A_memcpy(frame_data, frame.image_data().begin() + line, size - line);
 		}
 		frame_ = core::draw_frame(std::move(frame));
 		return frame_;
