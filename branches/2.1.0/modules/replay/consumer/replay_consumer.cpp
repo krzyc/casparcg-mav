@@ -81,7 +81,7 @@ struct replay_consumer : boost::noncopyable
 	const spl::shared_ptr<diagnostics::graph>		graph_;
 	monitor::basic_subject					event_subject_;
 
-#define REPLAY_FRAME_BUFFER					16
+#define REPLAY_FRAME_BUFFER					32
 #define REPLAY_JPEG_QUALITY					95
 
 public:
@@ -99,6 +99,7 @@ public:
 		encode_executor_.set_capacity(REPLAY_FRAME_BUFFER);
 
 		graph_->set_color("frame-time", diagnostics::color(0.1f, 1.0f, 0.1f));
+		graph_->set_color("compress-time", diagnostics::color(0.1f, 0.5f, 0.1f));
 		graph_->set_color("dropped-frame", diagnostics::color(0.3f, 0.6f, 0.3f));
 		graph_->set_text(print());
 		diagnostics::register_graph(graph_);
@@ -163,6 +164,7 @@ public:
 			interlaced = true;
 		}
 
+		boost::timer frame_timer;
 		if (!interlaced)
 		{
 			written = write_frame(out_file, format_desc.width, format_desc.height, bitmap1, quality);
@@ -175,6 +177,7 @@ public:
 			written = write_frame(out_file, format_desc.width, format_desc.height / 2, bitmap2, quality);
 			write_index(idx_file, written);
 		}
+		graph_->set_value("compress-time", frame_timer.elapsed()*0.5*format_desc_.fps);
 
 		// Deleting temporary field buffers;
 		delete bitmap1;

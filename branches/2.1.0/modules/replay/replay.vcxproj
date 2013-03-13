@@ -72,7 +72,7 @@
     <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)tmp\$(Configuration)\</IntDir>
     <IntDir Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">$(ProjectDir)tmp\$(Configuration)\</IntDir>
     <IntDir Condition="'$(Configuration)|$(Platform)'=='Develop|x64'">$(ProjectDir)tmp\$(Configuration)\</IntDir>
-    <IncludePath Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">..\..\;..\..\dependencies64\asmlib\;..\..\dependencies64\boost\;..\..\dependencies64\tbb\include\;..\..\dependencies64\libjpeg-turbo64\include;$(IncludePath)</IncludePath>
+    <IncludePath Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">..\..\;..\..\dependencies64\asmlib\;..\..\dependencies64\boost\;..\..\dependencies64\tbb\include\;..\..\dependencies64\libjpeg-turbo64\include;$(IncludePath);$(VCInstallDir)include\</IncludePath>
     <IncludePath Condition="'$(Configuration)|$(Platform)'=='Release|x64'">..\..\;..\..\dependencies64\asmlib\;..\..\dependencies64\boost\;..\..\dependencies64\tbb\include\;..\..\dependencies64\libjpeg-turbo64\include;$(IncludePath)</IncludePath>
     <IncludePath Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">..\..\;..\..\dependencies\boost\;..\..\dependencies\FreeImage\Dist\;..\..\dependencies\tbb\include\;$(IncludePath)</IncludePath>
     <IncludePath Condition="'$(Configuration)|$(Platform)'=='Develop|x64'">..\..\;..\..\dependencies\boost\;..\..\dependencies\FreeImage\Dist\;..\..\dependencies\tbb\include\;$(IncludePath)</IncludePath>

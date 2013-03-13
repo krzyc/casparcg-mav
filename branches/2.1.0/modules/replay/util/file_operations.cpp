@@ -43,6 +43,8 @@ namespace caspar { namespace replay {
 #define VIDEO_OUTPUT_BUF_SIZE		4096
 #define VIDEO_INPUT_BUF_SIZE		4096
 
+
+
 	struct error_mgr {
 		struct jpeg_error_mgr pub;	/* "public" fields */
 		jmp_buf setjmp_buffer;	/* for return to caller */
@@ -77,9 +79,9 @@ namespace caspar { namespace replay {
 	{
 		//FILE * const fp = _fsopen(filename, mode, shareFlags);
 		//return fp ? boost::shared_ptr<FILE>(fp, std::fclose) : boost::shared_ptr<FILE>();
-		//  | FILE_FLAG_NO_BUFFERING
+		//  | FILE_FLAG_NO_BUFFERING, FILE_FLAG_WRITE_THROUGH
 		mjpeg_file_handle handle;
-		if (handle = CreateFileW(filename, mode, shareFlags, NULL, (mode == GENERIC_WRITE ? CREATE_ALWAYS : OPEN_EXISTING), (mode == GENERIC_WRITE ? FILE_FLAG_WRITE_THROUGH : FILE_FLAG_RANDOM_ACCESS), NULL))
+		if (handle = CreateFileW(filename, mode, shareFlags, NULL, (mode == GENERIC_WRITE ? CREATE_ALWAYS : OPEN_EXISTING), (mode == GENERIC_WRITE ? 0 : 0), NULL))
 		{
 			return handle;	
 		}
@@ -142,7 +144,6 @@ namespace caspar { namespace replay {
 		fflush(outfile_idx.get()); */
 		DWORD written = 0;
 		WriteFile(outfile_idx, &offset, sizeof(long long), &written, NULL);
-
 	}
 
 	long long read_index(mjpeg_file_handle infile_idx)
@@ -326,6 +327,7 @@ namespace caspar { namespace replay {
 		{
 			DWORD written = 0;
 			bool success = WriteFile(dest->outfile, dest->buffer, datacount, &written, NULL);
+			//bool success = true;
 
 			if (!success)
 			  throw(cinfo, JERR_FILE_WRITE);
@@ -338,6 +340,7 @@ namespace caspar { namespace replay {
 
 		DWORD written = 0;
 		bool success = WriteFile(dest->outfile, dest->buffer, VIDEO_OUTPUT_BUF_SIZE, &written, NULL);
+		//bool success = true;
 
 		if (!success)
 			throw(cinfo, JERR_FILE_WRITE);
