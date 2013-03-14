@@ -40,10 +40,17 @@ namespace caspar { namespace replay {
 		boost::posix_time::ptime		begin_timecode;
 	};
 
+	enum mjpeg_process_mode
+	{
+		PROGRESSIVE,
+		UPPER,
+		LOWER
+	};
+
 	boost::shared_ptr<FILE> safe_fopen(const char* filename, const char* mode, int shareFlags);
 	void write_index_header(boost::shared_ptr<FILE> outfile_idx, const core::video_format_desc* format_desc);
 	void write_index(boost::shared_ptr<FILE> outfile_idx, long long offset);
-	long long write_frame(boost::shared_ptr<FILE> outfile, size_t width, size_t height, mmx_uint8_t* image, short quality);
+	long long write_frame(boost::shared_ptr<FILE> outfile, size_t width, size_t height, const mmx_uint8_t* image, short quality, mjpeg_process_mode mode);
 	long long read_index(boost::shared_ptr<FILE> infile_idx);
 	long long tell_index(boost::shared_ptr<FILE> infile_idx);
 	int seek_index(boost::shared_ptr<FILE> infile_idx, long long frame, int origin);

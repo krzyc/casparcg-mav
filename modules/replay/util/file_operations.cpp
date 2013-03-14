@@ -193,7 +193,7 @@ namespace caspar { namespace replay {
 		return ((*width) * (*height) * 4);
 	}
 
-	long long write_frame(boost::shared_ptr<FILE> outfile, size_t width, size_t height, mmx_uint8_t* image, short quality)
+	long long write_frame(boost::shared_ptr<FILE> outfile, size_t width, size_t height, const mmx_uint8_t* image, short quality, mjpeg_process_mode mode)
 	{
 		long long start_position = _ftelli64(outfile.get());
 
@@ -228,12 +228,34 @@ namespace caspar { namespace replay {
 
 		uint8_t* buf = new mmx_uint8_t[row_stride];
 
-		while (cinfo.next_scanline < cinfo.image_height)
-		{
-			bgra_to_rgb((uint8_t*)(image + (cinfo.next_scanline * row_stride)), buf, width);
+		if (mode == PROGRESSIVE) {
+			while (cinfo.next_scanline < cinfo.image_height)
+			{
+				bgra_to_rgb((uint8_t*)(image + (cinfo.next_scanline * row_stride)), buf, width);
 
-			row_pointer[0] = (JSAMPROW)buf;
-			(void) jpeg_write_scanlines(&cinfo, row_pointer, 1);
+				row_pointer[0] = (JSAMPROW)buf;
+				(void) jpeg_write_scanlines(&cinfo, row_pointer, 1);
+			}
+		}
+		else if (mode == UPPER)
+		{
+			while (cinfo.next_scanline < cinfo.image_height)
+			{
+				bgra_to_rgb((uint8_t*)(image + ((cinfo.next_scanline * 2) * row_stride)), buf, width);
+
+				row_pointer[0] = (JSAMPROW)buf;
+				(void) jpeg_write_scanlines(&cinfo, row_pointer, 1);
+			}
+		}
+		else if (mode == LOWER)
+		{
+			while (cinfo.next_scanline < cinfo.image_height)
+			{
+				bgra_to_rgb((uint8_t*)(image + ((cinfo.next_scanline * 2 + 1) * row_stride)), buf, width);
+
+				row_pointer[0] = (JSAMPROW)buf;
+				(void) jpeg_write_scanlines(&cinfo, row_pointer, 1);
+			}
 		}
 				
 		jpeg_finish_compress(&cinfo);
