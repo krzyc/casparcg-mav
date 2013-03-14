@@ -45,7 +45,7 @@ namespace caspar { namespace replay {
 		return fp ? boost::shared_ptr<FILE>(fp, std::fclose) : boost::shared_ptr<FILE>();
 	}
 
-	void write_index_header(boost::shared_ptr<FILE> outfile_idx, const core::video_format_desc* format_desc)
+	void write_index_header(boost::shared_ptr<FILE> outfile_idx, const core::video_format_desc* format_desc, boost::posix_time::ptime start_timecode)
 	{
 		mjpeg_file_header	header;
 		header.magick[0] = 'O';	// Set the "magick" four bytes
@@ -57,7 +57,7 @@ namespace caspar { namespace replay {
 		header.height = format_desc->height;
 		header.fps = format_desc->fps;
 		header.field_mode = format_desc->field_mode;
-		header.begin_timecode = boost::posix_time::microsec_clock::universal_time();
+		header.begin_timecode = start_timecode;
 
 		fwrite(&header, sizeof(mjpeg_file_header), 1, outfile_idx.get());
 		fflush(outfile_idx.get());
