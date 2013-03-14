@@ -48,7 +48,7 @@ namespace caspar { namespace replay {
 	};
 
 	boost::shared_ptr<FILE> safe_fopen(const char* filename, const char* mode, int shareFlags);
-	void write_index_header(boost::shared_ptr<FILE> outfile_idx, const core::video_format_desc* format_desc);
+	void write_index_header(boost::shared_ptr<FILE> outfile_idx, const core::video_format_desc* format_desc, boost::posix_time::ptime start_timecode);
 	void write_index(boost::shared_ptr<FILE> outfile_idx, long long offset);
 	long long write_frame(boost::shared_ptr<FILE> outfile, size_t width, size_t height, const mmx_uint8_t* image, short quality, mjpeg_process_mode mode);
 	long long read_index(boost::shared_ptr<FILE> infile_idx);

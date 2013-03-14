@@ -690,6 +690,7 @@ struct replay_producer : public core::frame_producer
 		info.add(L"type", L"replay-producer");
 		info.add(L"filename", filename_);
 		info.add(L"play-head", framenum_);
+		info.add(L"start-timecode", boost::posix_time::to_iso_wstring(index_header_->begin_timecode));
 		info.add(L"speed", speed_);
 		return info;
 	}
