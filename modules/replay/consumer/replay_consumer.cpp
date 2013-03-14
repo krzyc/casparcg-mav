@@ -42,6 +42,7 @@
 #include <boost/thread.hpp>
 #include <boost/thread/locks.hpp>
 #include <boost/property_tree/ptree.hpp>
+#include <boost/date_time/posix_time/posix_time.hpp>
 
 #include <tbb/concurrent_queue.h>
 
@@ -73,13 +74,16 @@ struct replay_consumer : boost::noncopyable
 	std::wstring							filename_;
 	tbb::atomic<uint64_t>					framenum_;
 	int16_t									quality_;
+	boost::timer							tick_timer_;
 	//boost::mutex*							file_mutex_;
 	mjpeg_file_handle						output_file_;
 	mjpeg_file_handle						output_index_file_;
+	mjpeg_process_mode						mode_;
 	bool									file_open_;
 	executor								encode_executor_;
 	const spl::shared_ptr<diagnostics::graph>		graph_;
 	monitor::basic_subject					event_subject_;
+	boost::posix_time::ptime				start_timecode_;
 
 #define REPLAY_FRAME_BUFFER					32
 #define REPLAY_JPEG_QUALITY					95
@@ -98,14 +102,30 @@ public:
 
 		encode_executor_.set_capacity(REPLAY_FRAME_BUFFER);
 
+		graph_->set_color("tick-time", diagnostics::color(0.0f, 0.6f, 0.9f));
 		graph_->set_color("frame-time", diagnostics::color(0.1f, 1.0f, 0.1f));
-		graph_->set_color("compress-time", diagnostics::color(0.1f, 0.5f, 0.1f));
+		graph_->set_color("field1-time", diagnostics::color(0.1f, 0.1f, 0.5f));
+		graph_->set_color("field2-time", diagnostics::color(0.5f, 0.1f, 0.1f));
 		graph_->set_color("dropped-frame", diagnostics::color(0.3f, 0.6f, 0.3f));
 		graph_->set_text(print());
 		diagnostics::register_graph(graph_);
 
 		//file_mutex_ = new boost::mutex();
 		file_open_ = false;
+
+		if (format_desc.field_mode == caspar::core::field_mode::progressive)
+		{
+			mode_ = PROGRESSIVE;
+		}
+		else if (format_desc.field_mode == caspar::core::field_mode::upper)
+		{
+			mode_ = UPPER;
+		}
+		else if (format_desc.field_mode == caspar::core::field_mode::lower)
+		{
+			mode_ = LOWER;
+		}
+
 
 		output_file_ = safe_fopen((env::media_folder() + filename_ + L".MAV").c_str(), GENERIC_WRITE, FILE_SHARE_READ);
 		if (output_file_ == NULL)
@@ -128,7 +148,10 @@ public:
 			}
 		}
 
-		write_index_header(output_index_file_, &format_desc);
+		start_timecode_ = boost::posix_time::microsec_clock::universal_time();
+
+		write_index_header(output_index_file_, &format_desc, start_timecode_);
+		update_osc();
 	}
 
 #pragma warning(disable: 4701)
@@ -139,57 +162,49 @@ public:
 		auto idx_file = output_index_file_;
 		auto quality = quality_;
 
-		uint8_t* bitmap1;
-		uint8_t* bitmap2;
-		bool interlaced = false;
 		long long written = 0;
+		double perf_timer;
 
-		if (format_desc.field_mode == caspar::core::field_mode::progressive)
+		switch (mode_)
 		{
-			bitmap1 = new mmx_uint8_t[format_desc.width * format_desc.height * 4];
-			memcpy(bitmap1, frame.image_data().begin(), frame.image_data().size());
+		case PROGRESSIVE:
+			written = write_frame(out_file, format_desc.width, format_desc.height, frame.image_data().begin(), quality, PROGRESSIVE, &perf_timer);
+			write_index(idx_file, written, NULL);
+			break;
+		case UPPER:
+			written = write_frame(out_file, format_desc.width, format_desc.height / 2, frame.image_data().begin(), quality, UPPER, &perf_timer);
+			graph_->set_value("field1-time", perf_timer*0.5*format_desc_.fps);
+			write_index(idx_file, written, NULL);
+			written = write_frame(out_file, format_desc.width, format_desc.height / 2, frame.image_data().begin(), quality, LOWER, &perf_timer);
+			graph_->set_value("field2-time", perf_timer*0.5*format_desc_.fps);
+			write_index(idx_file, written, NULL);
+			break;
+		case LOWER:
+			written = write_frame(out_file, format_desc.width, format_desc.height / 2, frame.image_data().begin(), quality, LOWER, &perf_timer);
+			graph_->set_value("field1-time", perf_timer*0.5*format_desc_.fps);
+			write_index(idx_file, written, NULL);
+			written = write_frame(out_file, format_desc.width, format_desc.height / 2, frame.image_data().begin(), quality, UPPER, &perf_timer);
+			graph_->set_value("field2-time", perf_timer*0.5*format_desc_.fps);
+			write_index(idx_file, written, NULL);
+			break;
 		}
-		else
-		{
-			bitmap1 = new mmx_uint8_t[format_desc.width * format_desc.height / 2 * 4];
-			bitmap2 = new mmx_uint8_t[format_desc.width * format_desc.height / 2 * 4];
-			if (format_desc.field_mode == caspar::core::field_mode::upper)
-			{
-				split_frame_to_fields(frame.image_data().begin(), bitmap1, bitmap2, format_desc.width, format_desc.height, 4);
-			}
-			else if (format_desc.field_mode == caspar::core::field_mode::lower)
-			{
-				split_frame_to_fields(frame.image_data().begin(), bitmap2, bitmap1, format_desc.width, format_desc.height, 4);
-			}
-			interlaced = true;
-		}
-
-		boost::timer frame_timer;
-		if (!interlaced)
-		{
-			written = write_frame(out_file, format_desc.width, format_desc.height, bitmap1, quality);
-			write_index(idx_file, written);
-		}
-		else
-		{
-			written = write_frame(out_file, format_desc.width, format_desc.height / 2, bitmap1, quality);
-			write_index(idx_file, written);
-			written = write_frame(out_file, format_desc.width, format_desc.height / 2, bitmap2, quality);
-			write_index(idx_file, written);
-		}
-		graph_->set_value("compress-time", frame_timer.elapsed()*0.5*format_desc_.fps);
-
-		// Deleting temporary field buffers;
-		delete bitmap1;
-		if (interlaced) delete bitmap2;
 
 		++framenum_;
+		update_osc();
 	}
 #pragma warning(default: 4701)
 
 	bool ready_for_frame()
 	{
 		return encode_executor_.size() < encode_executor_.capacity();
+	}
+
+	void update_osc()
+	{
+		event_subject_ << monitor::event("frame") % (long long)framenum_
+					   << monitor::event("time") % (long long)(framenum_ / format_desc_.fps)
+					   << monitor::event("path") % filename_
+					   << monitor::event("type") % std::wstring(L"replay");
 	}
 
 	void mark_dropped()
@@ -217,6 +232,9 @@ public:
 			{
 				mark_dropped();
 			}
+
+			graph_->set_value("tick-time", tick_timer_.elapsed()*format_desc_.fps*0.5);	
+			tick_timer_.restart();
 		}
 
 		return wrap_as_future(true);
@@ -237,12 +255,12 @@ public:
 
 	void subscribe(const monitor::observable::observer_ptr& o)
 	{
-		//consumer_->subscribe(o);
+		return event_subject_.subscribe(o);
 	}
 
 	void unsubscribe(const monitor::observable::observer_ptr& o)
 	{
-		//consumer_->unsubscribe(o);
+		return event_subject_.unsubscribe(o);
 	}	
 
 	~replay_consumer()

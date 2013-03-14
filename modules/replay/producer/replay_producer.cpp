@@ -160,6 +160,8 @@ struct replay_producer : public core::frame_producer_base
 								last_framenum_ = last_framenum_ * 2;
 						}
 
+						update_osc();
+
 						graph_->set_color("frame-time", diagnostics::color(0.1f, 1.0f, 0.1f));
 						graph_->set_text(print());
 						diagnostics::register_graph(graph_);
@@ -181,6 +183,25 @@ struct replay_producer : public core::frame_producer_base
 			CASPAR_LOG(error) << print() << L" Video essence file " << filename_ << " not found";
 		}
 		//frame_factory_ = frame_factory;
+	}
+
+	void update_osc()
+	{
+		 event_subject_ << monitor::event("replay/path") % filename_
+						<< monitor::event("replay/speed") % speed_
+						<< monitor::event("replay/frame") % (long long)(interlaced_ ? framenum_ / 2 : framenum_)
+						<< monitor::event("replay/time") % (long long)(interlaced_ ? (framenum_ / (2 * index_header_->fps)) : (framenum_ / index_header_->fps))
+						<< monitor::event("replay/start-timecode") % boost::posix_time::to_iso_wstring(index_header_->begin_timecode)
+						<< monitor::event("replay/fps") % index_header_->fps
+						<< monitor::event("replay/video/width") % (int)index_header_->width
+						<< monitor::event("replay/video/height") % (int)index_header_->height
+		//event_subject_ << monitor::event("replay/video/field") % index_header_->field_mode;
+						<< monitor::event("replay/video/codec") % std::wstring(L"MJPEG");
+
+		if (last_framenum_ > 0)
+		{
+			event_subject_ << monitor::event("replay/length") % (long long)(interlaced_ ? ((last_framenum_ - first_framenum_) / 2) : (last_framenum_ - first_framenum_));
+		}
 	}
 	
 	core::draw_frame make_frame(uint8_t* frame_data, size_t size, size_t width, size_t height, bool drop_first_line)
@@ -273,6 +294,8 @@ struct replay_producer : public core::frame_producer_base
 				last_framenum_ = first_framenum_ + last_frame;
 				if (interlaced_)
 					last_framenum_ = last_framenum_ * 2;
+
+				event_subject_ << monitor::event("replay/length") % (long long)(interlaced_ ? ((last_framenum_ - first_framenum_) / 2) : (last_framenum_ - first_framenum_));
 			}
 			return L"";
 		}
@@ -351,7 +374,7 @@ struct replay_producer : public core::frame_producer_base
 		}
 	}
 
-	void proper_interlace(const mmx_uint8_t* field1, const mmx_uint8_t* field2, mmx_uint8_t* dst)
+	void proper_interlace(const uint8_t* field1, const uint8_t* field2, uint8_t* dst)
 	{
 		if (index_header_->field_mode == caspar::core::field_mode::lower)
 		{
@@ -430,9 +453,9 @@ struct replay_producer : public core::frame_producer_base
 
 				seek_frame(in_file_, field1_pos, FILE_BEGIN);
 
-				mmx_uint8_t* field1 = NULL;
-				mmx_uint8_t* field2 = NULL;
-				mmx_uint8_t* full_frame = NULL;
+				uint8_t* field1 = NULL;
+				uint8_t* field2 = NULL;
+				uint8_t* full_frame = NULL;
 				size_t field1_width;
 				size_t field1_height;
 				size_t field1_size = read_frame(in_file_, &field1_width, &field1_height, &field1);
@@ -447,7 +470,7 @@ struct replay_producer : public core::frame_producer_base
 
 					size_t field2_size = read_frame(in_file_, &field1_width, &field1_height, &field2);
 
-					full_frame = new mmx_uint8_t[field1_size * 2];
+					full_frame = new uint8_t[field1_size * 2];
 					proper_interlace(field1, field2, full_frame);
 
 					make_frame(full_frame, field1_size * 2, index_header_->width, index_header_->height, false);
@@ -516,9 +539,9 @@ struct replay_producer : public core::frame_producer_base
 
 				seek_frame(in_file_, field1_pos, FILE_BEGIN);
 
-				mmx_uint8_t* field1 = NULL;
-				mmx_uint8_t* field2 = NULL;
-				mmx_uint8_t* full_frame = NULL;
+				uint8_t* field1 = NULL;
+				uint8_t* field2 = NULL;
+				uint8_t* full_frame = NULL;
 				size_t field1_width;
 				size_t field1_height;
 				size_t field1_size = read_frame(in_file_, &field1_width, &field1_height, &field1);
@@ -534,7 +557,7 @@ struct replay_producer : public core::frame_producer_base
 				
 					size_t field2_size = read_frame(in_file_, &field1_width, &field1_height, &field2);
 
-					full_frame = new mmx_uint8_t[field1_size * 2];
+					full_frame = new uint8_t[field1_size * 2];
 					proper_interlace(field1, field2, full_frame);
 
 					last_field_size_ = field2_size + field1_size;
@@ -548,7 +571,7 @@ struct replay_producer : public core::frame_producer_base
 
 				result_framenum_++;
 
-				mmx_uint8_t* final_frame = new mmx_uint8_t[last_field_size_];
+				uint8_t* final_frame = new uint8_t[last_field_size_];
 
 				blend_images(full_frame, last_field_, final_frame, index_header_->width, index_header_->height, 4, (uint8_t)((1.0f - left_of_last_field_) * 64.0f));
 
@@ -602,20 +625,20 @@ struct replay_producer : public core::frame_producer_base
 
 		seek_frame(in_file_, field1_pos, FILE_BEGIN);
 
-		mmx_uint8_t* field1 = NULL;
-		mmx_uint8_t* field2 = NULL;
-		mmx_uint8_t* full_frame = NULL;
+		uint8_t* field1 = NULL;
+		uint8_t* field2 = NULL;
+		uint8_t* full_frame = NULL;
 		size_t field1_width;
 		size_t field1_height;
 		size_t field1_size = read_frame(in_file_, &field1_width, &field1_height, &field1);
 
 		if ((!interlaced_) || (frame_divider_ > 1))
 		{
-			mmx_uint8_t* full_frame = NULL;
+			uint8_t* full_frame = NULL;
 
 			if (interlaced_) 
 			{
-				full_frame = new mmx_uint8_t[field1_size * 2];
+				full_frame = new uint8_t[field1_size * 2];
 				field_double(field1, full_frame, index_header_->width, index_header_->height, 4);
 			}
 			else
@@ -648,7 +671,7 @@ struct replay_producer : public core::frame_producer_base
 
 			size_t field2_size = read_frame(in_file_, &field1_width, &field1_height, &field2);
 
-			full_frame = new mmx_uint8_t[field1_size + field2_size];
+			full_frame = new uint8_t[field1_size + field2_size];
 
 			proper_interlace(field1, field2, full_frame);
 		
@@ -669,6 +692,8 @@ struct replay_producer : public core::frame_producer_base
 		delete full_frame;
 
 		update_diag(frame_timer.elapsed());
+
+		update_osc();
 
 		return frame_;
 	}

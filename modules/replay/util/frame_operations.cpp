@@ -30,21 +30,24 @@
 
 #include <tbb/parallel_for.h>
 
-// #define OPTIMIZE_RGB_TO_BGRA
-// #define OPTIMIZE_BGRA_TO_RGB
-// #define USE_PARALLEL_FOR
+//#define OPTIMIZE_RGB_TO_BGRA
+//#define OPTIMIZE_BGRA_TO_RGB
+#define USE_PARALLEL_FOR
 
 namespace caspar { namespace replay {
 
 #pragma warning(disable:4309)
-	void bgra_to_rgb(const mmx_uint8_t* src, mmx_uint8_t* dst, int line_width)
+	void bgra_to_rgb(const uint8_t* src, uint8_t* dst, int line_width)
 	{
 #ifndef OPTIMIZE_BGRA_TO_RGB
-		for (int i=0; i<line_width; i++) {
-			*(dst + i * 3) = *(src + i * 4 + 2);
-			*(dst + i * 3 + 1) = *(src + i * 4 + 1);
-			*(dst + i * 3 + 2) = *(src + i * 4);
-		}
+		tbb::parallel_for(tbb::blocked_range<size_t>(0, line_width), [=](const tbb::blocked_range<size_t>& r)
+		{
+			for (int i = r.begin(); i != r.end(); i++) {
+				*(dst + i * 3) = *(src + i * 4 + 2);
+				*(dst + i * 3 + 1) = *(src + i * 4 + 1);
+				*(dst + i * 3 + 2) = *(src + i * 4);
+			}
+		});
 #else
 		// int8_t mask[16] = {2,1,0,6,5,4,10,9,8,14,13,12,0xFF,0xFF,0xFF,0xFF};//{0xFF, 0xFF, 0xFF, 0xFF, 13, 14, 15, 9, 10, 11, 5, 6, 7, 1, 2, 3};
 
@@ -60,7 +63,7 @@ namespace caspar { namespace replay {
 
 			in = *src_sse;
 
-			out = _mm_shuffle_epi8(in, _mm_set_epi8(0xFF, 0xFF, 0xFF, 0xFF, 13, 14, 15, 9, 10, 11, 5, 6, 7, 1, 2, 3));
+			out = _mm_shuffle_epi8(in, _mm_set_epi8(0xff, 0xff, 0xff, 0xff, 12, 13, 14, 8, 9, 10, 4, 5, 6, 0, 1, 2));
 
 			*dst_sse = out;
 
@@ -89,16 +92,19 @@ l1:
 #pragma warning(default:4309)
 
 #pragma warning(disable:4309)
-	void rgb_to_bgra(const mmx_uint8_t* src, mmx_uint8_t* dst, int line_width)
+	void rgb_to_bgra(const uint8_t* src, uint8_t* dst, int line_width)
 	{
 
 #ifndef OPTIMIZE_RGB_TO_BGRA
-		for (int i=0; i<line_width; i++) {
-			*(dst + i * 4 + 3) = 255;
-			*(dst + i * 4 + 2) = *(src + i * 3);
-			*(dst + i * 4 + 1) = *(src + i * 3 + 1);
-			*(dst + i * 4) = *(src + i * 3 + 2);
-		}
+		tbb::parallel_for(tbb::blocked_range<size_t>(0, line_width), [=](const tbb::blocked_range<size_t>& r)
+		{
+			for (int i = r.begin(); i != r.end(); i++) {
+				*(dst + i * 4 + 3) = 255;
+				*(dst + i * 4 + 2) = *(src + i * 3);
+				*(dst + i * 4 + 1) = *(src + i * 3 + 1);
+				*(dst + i * 4) = *(src + i * 3 + 2);
+			}
+		});
 #else
 		const __m128i* in_vec = (__m128i*)src;
 		__m128i* out_vec = (__m128i*)dst;
@@ -150,10 +156,9 @@ l1:
 	}
 #pragma warning(default:4309)
 
-	void split_frame_to_fields(const mmx_uint8_t* src, mmx_uint8_t* dst1, mmx_uint8_t* dst2, size_t width, size_t height, size_t stride)
+	void split_frame_to_fields(const uint8_t* src, uint8_t* dst1, uint8_t* dst2, size_t width, size_t height, size_t stride)
 	{
 		size_t full_row = width * stride;
-#ifdef USE_PARALLEL_FOR
 		tbb::parallel_for(tbb::blocked_range<size_t>(0, height/2), [=](const tbb::blocked_range<size_t>& r)
 		{
 			for (auto i = r.begin(); i != r.end(); ++i)
@@ -162,19 +167,11 @@ l1:
 				A_memcpy((dst2 + i * full_row), (src + (i * 2 + 1) * full_row), full_row);
 			}
 		});
-#else
-		for (auto i = 0; i != height/2; ++i)
-		{
-				memcpy((dst1 + i * full_row), (src + i * 2 * full_row), full_row);
-				memcpy((dst2 + i * full_row), (src + (i * 2 + 1) * full_row), full_row);
-		}
-#endif
 	}
 
-	void interlace_fields(const mmx_uint8_t* src1, const mmx_uint8_t* src2, mmx_uint8_t* dst, size_t width, size_t height, size_t stride)
+	void interlace_fields(const uint8_t* src1, const uint8_t* src2, uint8_t* dst, size_t width, size_t height, size_t stride)
 	{
 		size_t full_row = width * stride;
-#ifdef USE_PARALLEL_FOR
  		tbb::parallel_for(tbb::blocked_range<size_t>(0, height/2), [=](const tbb::blocked_range<size_t>& r)
 		{
 			for (auto i = r.begin(); i != r.end(); ++i)
@@ -183,19 +180,11 @@ l1:
 				A_memcpy((dst + (i * 2 + 1) * full_row), (src2 + i * full_row), full_row);
 			}
 		});
-#else
-		for (auto i = 0; i != height/2; ++i)
-		{
-			memcpy((dst + i * 2 * full_row), (src1 + i * full_row), full_row);
-			memcpy((dst + (i * 2 + 1) * full_row), (src2 + i * full_row), full_row);
-		}
-#endif
 	}
 	
-	void field_double(const mmx_uint8_t* src, mmx_uint8_t* dst, size_t width, size_t height, size_t stride)
+	void field_double(const uint8_t* src, uint8_t* dst, size_t width, size_t height, size_t stride)
 	{
 		size_t full_row = width * stride;
-#ifdef USE_PARALLEL_FOR
 		tbb::parallel_for(tbb::blocked_range<size_t>(0, height/2 - 1), [=](const tbb::blocked_range<size_t>& r)
 		{
 			for (auto i = r.begin(); i != r.end(); ++i)
@@ -207,25 +196,14 @@ l1:
 				}
 			}
 		});
-#else
-		for (auto i = 0; i != height/2; ++i)
-		{
-			for (uint32_t j = 0; j < full_row; ++j)
-			{
-				dst[i * 2 * full_row + j] = src[i * full_row + j];
-				dst[(i * 2 + 1) * full_row + j] = (src[i * full_row + j] >> 1) + (src[(i + 1) * full_row + j] >> 1);
-			}
-		}
-#endif
 	}
 
 #pragma warning(disable:4309 4244)
 	// max level is 64
-	void blend_images(const mmx_uint8_t* src1, mmx_uint8_t* src2, mmx_uint8_t* dst, size_t width, size_t height, size_t stride, uint8_t level)
+	void blend_images(const uint8_t* src1, uint8_t* src2, uint8_t* dst, size_t width, size_t height, size_t stride, uint8_t level)
 	{
 		uint32_t full_size = width * height * stride;
 		uint16_t level_16 = (uint16_t)level;
-#ifdef USE_PARALLEL_FOR
 		tbb::parallel_for(tbb::blocked_range<size_t>(0, full_size), [=](const tbb::blocked_range<size_t>& r)
 		{
 			for (auto i = r.begin(); i != r.end(); i++)
@@ -233,12 +211,6 @@ l1:
 				dst[i] = (uint8_t)((((uint16_t)src1[i] * level_16) >> 6) + (((uint16_t)src2[i] * (64 - level_16)) >> 6));
 			}
 		});
-#else
-		for (auto i = 0; i != full_size; i++)
-		{
-			dst[i] = (uint8_t)((((uint16_t)src1[i] * level_16) >> 6) + (((uint16_t)src2[i] * (64 - level_16)) >> 6));
-		}
-#endif
 	}
 #pragma warning(default:4309)
 }}

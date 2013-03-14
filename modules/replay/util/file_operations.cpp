@@ -21,6 +21,7 @@
 */
 
 #include <boost/shared_ptr.hpp>
+#include <boost/timer.hpp>
 #include <stdint.h>
 #include <common/env.h>
 #include <common/log.h>
@@ -98,7 +99,7 @@ namespace caspar { namespace replay {
 		CloseHandle(file_handle);
 	}
 
-	void write_index_header(mjpeg_file_handle outfile_idx, const core::video_format_desc* format_desc)
+	void write_index_header(mjpeg_file_handle outfile_idx, const core::video_format_desc* format_desc, boost::posix_time::ptime start_timecode)
 	{
 		mjpeg_file_header	header;
 		header.magick[0] = 'O';	// Set the "magick" four bytes
@@ -110,7 +111,7 @@ namespace caspar { namespace replay {
 		header.height = format_desc->height;
 		header.fps = format_desc->fps;
 		header.field_mode = format_desc->field_mode;
-		header.begin_timecode = boost::posix_time::microsec_clock::universal_time();
+		header.begin_timecode = start_timecode;
 
 		/* fwrite(&header, sizeof(mjpeg_file_header), 1, outfile_idx.get());
 		fflush(outfile_idx.get()); */
@@ -138,12 +139,15 @@ namespace caspar { namespace replay {
 		}
 	}
 
-	void write_index(mjpeg_file_handle outfile_idx, long long offset)
+	void write_index(mjpeg_file_handle outfile_idx, long long offset, double* write_time)
 	{
 		/* fwrite(&offset, sizeof(long long), 1, outfile_idx.get());
 		fflush(outfile_idx.get()); */
 		DWORD written = 0;
+		boost::timer perf_timer;
 		WriteFile(outfile_idx, &offset, sizeof(long long), &written, NULL);
+		if (write_time != NULL)
+			*write_time = perf_timer.elapsed();
 	}
 
 	long long read_index(mjpeg_file_handle infile_idx)
@@ -379,7 +383,7 @@ namespace caspar { namespace replay {
 		longjmp(myerr->setjmp_buffer, 1);
 	} 
 
-	size_t read_frame(mjpeg_file_handle infile, size_t* width, size_t* height, mmx_uint8_t** image)
+	size_t read_frame(mjpeg_file_handle infile, size_t* width, size_t* height, uint8_t** image)
 	{
 		struct jpeg_decompress_struct cinfo;
 
@@ -416,7 +420,7 @@ namespace caspar { namespace replay {
 
 		(*width) = cinfo.output_width;
 		(*height) = cinfo.output_height;
-		(*image) = new mmx_uint8_t[(*width) * (*height) * 4];
+		(*image) = new uint8_t[(*width) * (*height) * 4];
 
 		buffer = (*cinfo.mem->alloc_sarray)((j_common_ptr) &cinfo, JPOOL_IMAGE, row_stride, 1); 
 
@@ -439,9 +443,10 @@ namespace caspar { namespace replay {
 	}
 
 #pragma warning(disable:4267)
-	long long write_frame(mjpeg_file_handle outfile, size_t width, size_t height, mmx_uint8_t* image, short quality)
+	long long write_frame(mjpeg_file_handle outfile, size_t width, size_t height, const uint8_t* image, short quality, mjpeg_process_mode mode, double* compress_time)
 	{
-		//long long start_position = _ftelli64(outfile.get());
+		boost::timer perf_timer;
+
 		long long start_position = tell_frame(outfile);
 
 		// JPEG Compression Parameters
@@ -474,14 +479,36 @@ namespace caspar { namespace replay {
 		// JSAMPLEs per row in image_buffer
 		row_stride = width * 4;
 
-		uint8_t* buf = new mmx_uint8_t[row_stride];
+		uint8_t* buf = new uint8_t[row_stride];
 
-		while (cinfo.next_scanline < cinfo.image_height)
+		if (mode == PROGRESSIVE) {
+			while (cinfo.next_scanline < cinfo.image_height)
+			{
+				bgra_to_rgb((uint8_t*)(image + (cinfo.next_scanline * row_stride)), buf, width);
+
+				row_pointer[0] = (JSAMPROW)buf;
+				(void) jpeg_write_scanlines(&cinfo, row_pointer, 1);
+			}
+		}
+		else if (mode == UPPER)
 		{
-			bgra_to_rgb((uint8_t*)(image + (cinfo.next_scanline * row_stride)), buf, width);
+			while (cinfo.next_scanline < cinfo.image_height)
+			{
+				bgra_to_rgb((uint8_t*)(image + ((cinfo.next_scanline * 2) * row_stride)), buf, width);
 
-			row_pointer[0] = (JSAMPROW)buf;
-			(void) jpeg_write_scanlines(&cinfo, row_pointer, 1);
+				row_pointer[0] = (JSAMPROW)buf;
+				(void) jpeg_write_scanlines(&cinfo, row_pointer, 1);
+			}
+		}
+		else if (mode == LOWER)
+		{
+			while (cinfo.next_scanline < cinfo.image_height)
+			{
+				bgra_to_rgb((uint8_t*)(image + ((cinfo.next_scanline * 2 + 1) * row_stride)), buf, width);
+
+				row_pointer[0] = (JSAMPROW)buf;
+				(void) jpeg_write_scanlines(&cinfo, row_pointer, 1);
+			}
 		}
 		
 		jpeg_finish_compress(&cinfo);
@@ -489,6 +516,11 @@ namespace caspar { namespace replay {
 		jpeg_destroy_compress(&cinfo); 
 
 		delete buf;
+
+		if (compress_time != NULL)
+		{
+			*compress_time = perf_timer.elapsed();
+		}
 
 		return start_position;
 	}
