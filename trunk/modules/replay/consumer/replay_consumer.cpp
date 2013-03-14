@@ -62,6 +62,7 @@ struct replay_consumer : public core::frame_consumer
 	bool									file_open_;
 	executor								encode_executor_;
 	const safe_ptr<diagnostics::graph>		graph_;
+	mjpeg_process_mode						mode_;
 
 #define REPLAY_FRAME_BUFFER					16
 #define REPLAY_JPEG_QUALITY					95
@@ -113,6 +114,18 @@ public:
 			}
 		}
 
+		if (format_desc.field_mode == caspar::core::field_mode::progressive)
+		{
+			mode_ = PROGRESSIVE;
+		}
+		else if (format_desc.field_mode == caspar::core::field_mode::upper)
+		{
+			mode_ = UPPER;
+		}
+		else if (format_desc.field_mode == caspar::core::field_mode::lower)
+		{
+			mode_ = LOWER;
+		}
 		write_index_header(output_index_file_, &format_desc);
 	}
 
@@ -124,12 +137,12 @@ public:
 		auto idx_file = output_index_file_;
 		auto quality = quality_;
 
-		uint8_t* bitmap1;
+		/* uint8_t* bitmap1;
 		uint8_t* bitmap2;
-		bool interlaced = false;
+		bool interlaced = false; */
 		long long written = 0;
 
-		if (format_desc.field_mode == caspar::core::field_mode::progressive)
+		/* if (format_desc.field_mode == caspar::core::field_mode::progressive)
 		{
 			bitmap1 = new mmx_uint8_t[format_desc.width * format_desc.height * 4];
 			memcpy(bitmap1, frame.image_data().begin(), frame.image_size());
@@ -147,24 +160,31 @@ public:
 				split_frame_to_fields(frame.image_data().begin(), bitmap2, bitmap1, format_desc.width, format_desc.height, 4);
 			}
 			interlaced = true;
-		}
+		} */
 
-		if (!interlaced)
+		switch (mode_)
 		{
-			written = write_frame(out_file, format_desc.width, format_desc.height, bitmap1, quality);
+		case PROGRESSIVE:
+			written = write_frame(out_file, format_desc.width, format_desc.height, frame.image_data().begin(), quality, PROGRESSIVE);
 			write_index(idx_file, written);
-		}
-		else
-		{
-			written = write_frame(out_file, format_desc.width, format_desc.height / 2, bitmap1, quality);
+			break;
+		case UPPER:
+			written = write_frame(out_file, format_desc.width, format_desc.height / 2, frame.image_data().begin(), quality, UPPER);
 			write_index(idx_file, written);
-			written = write_frame(out_file, format_desc.width, format_desc.height / 2, bitmap2, quality);
+			written = write_frame(out_file, format_desc.width, format_desc.height / 2, frame.image_data().begin(), quality, LOWER);
 			write_index(idx_file, written);
+			break;
+		case LOWER:
+			written = write_frame(out_file, format_desc.width, format_desc.height / 2, frame.image_data().begin(), quality, LOWER);
+			write_index(idx_file, written);
+			written = write_frame(out_file, format_desc.width, format_desc.height / 2, frame.image_data().begin(), quality, UPPER);
+			write_index(idx_file, written);
+			break;
 		}
 
 		// Deleting temporary field buffers;
-		delete bitmap1;
-		if (interlaced) delete bitmap2;
+		/* delete bitmap1;
+		if (interlaced) delete bitmap2;*/
 
 		++framenum_;
 	}

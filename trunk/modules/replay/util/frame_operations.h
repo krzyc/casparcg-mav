@@ -24,7 +24,8 @@
 
 #pragma once
 
-typedef __declspec(align(16)) uint8_t mmx_uint8_t;
+//typedef __declspec(align(16)) uint8_t mmx_uint8_t;
+typedef uint8_t mmx_uint8_t;
 
 namespace caspar { namespace replay {
 void bgra_to_rgb(const mmx_uint8_t* src, mmx_uint8_t* dst, int line_width);

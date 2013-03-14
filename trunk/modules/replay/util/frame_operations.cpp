@@ -28,8 +28,8 @@
 
 #include <tbb/parallel_for.h>
 
-#define OPTIMIZE_RGB_TO_BGRA
-#define OPTIMIZE_BGRA_TO_RGB
+//#define OPTIMIZE_RGB_TO_BGRA
+//#define OPTIMIZE_BGRA_TO_RGB
 
 namespace caspar { namespace replay {
 
@@ -37,11 +37,13 @@ namespace caspar { namespace replay {
 	void bgra_to_rgb(const mmx_uint8_t* src, mmx_uint8_t* dst, int line_width)
 	{
 #ifndef OPTIMIZE_BGRA_TO_RGB
-		for (int i=0; i<line_width; i++) {
-			*(dst + i * 3) = *(src + i * 4 + 2);
-			*(dst + i * 3 + 1) = *(src + i * 4 + 1);
-			*(dst + i * 3 + 2) = *(src + i * 4);
-		}
+		tbb::parallel_for(tbb::blocked_range<int>(0, line_width), [=](const tbb::blocked_range<int>& r) {
+			for (int i = r.begin(); i != r.end(); i++) {
+				*(dst + i * 3) = *(src + i * 4 + 2);
+				*(dst + i * 3 + 1) = *(src + i * 4 + 1);
+				*(dst + i * 3 + 2) = *(src + i * 4);
+			}
+		});
 #else
 		int8_t mask[16] = {2,1,0,6,5,4,10,9,8,14,13,12,0xFF,0xFF,0xFF,0xFF};//{0xFF, 0xFF, 0xFF, 0xFF, 13, 14, 15, 9, 10, 11, 5, 6, 7, 1, 2, 3};
 
@@ -72,12 +74,14 @@ l1:
 	{
 
 #ifndef OPTIMIZE_RGB_TO_BGRA
-		for (int i=0; i<line_width; i++) {
-			*(dst + i * 4 + 3) = 255;
-			*(dst + i * 4 + 2) = *(src + i * 3);
-			*(dst + i * 4 + 1) = *(src + i * 3 + 1);
-			*(dst + i * 4) = *(src + i * 3 + 2);
-		}
+		tbb::parallel_for(tbb::blocked_range<int>(0, line_width), [=](const tbb::blocked_range<int>& r) {
+			for (int i = r.begin(); i != r.end(); i++) {
+				*(dst + i * 4 + 3) = 255;
+				*(dst + i * 4 + 2) = *(src + i * 3);
+				*(dst + i * 4 + 1) = *(src + i * 3 + 1);
+				*(dst + i * 4) = *(src + i * 3 + 2);
+			}
+		});
 #else
 		const __m128i* in_vec = (__m128i*)src;
 		__m128i* out_vec = (__m128i*)dst;
