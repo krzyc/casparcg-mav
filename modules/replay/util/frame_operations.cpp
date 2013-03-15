@@ -28,8 +28,8 @@
 
 #include <tbb/parallel_for.h>
 
-//#define OPTIMIZE_RGB_TO_BGRA
-//#define OPTIMIZE_BGRA_TO_RGB
+#define OPTIMIZE_RGB_TO_BGRA
+#define OPTIMIZE_BGRA_TO_RGB
 
 namespace caspar { namespace replay {
 
@@ -193,7 +193,7 @@ l1:
 		{
 			for (auto i = r.begin(); i != r.end(); i++)
 			{
-				dst[i] = (uint8_t)((((uint16_t)src1[i] * level_16) >> 6) + (((uint16_t)src2[i] * (64 - level_16)) >> 6));
+				dst[i] = (uint8_t)((((int)src1[i] * level_16) >> 6) + (((int)src2[i] * (64 - level_16)) >> 6));
 			}
 		});
 	}
