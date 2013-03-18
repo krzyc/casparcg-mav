@@ -376,7 +376,8 @@ bool ChannelGridCommand::DoExecute()
 		}
 	}
 
-	int n = GetChannels().size()-1;
+	// Use best fit (use as big pictures as possible)
+	int n = (int)ceil(sqrt((float)GetChannels().size()-1));
 	double delta = 1.0/static_cast<double>(n);
 	for(int x = 0; x < n; ++x)
 	{

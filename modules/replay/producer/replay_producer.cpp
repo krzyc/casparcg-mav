@@ -65,8 +65,8 @@ struct replay_producer : public core::frame_producer
 {	
 	const std::wstring						filename_;
 	safe_ptr<core::basic_frame>				frame_;
-	boost::shared_ptr<FILE>					in_file_;
-	boost::shared_ptr<FILE>					in_idx_file_;
+	mjpeg_file_handle						in_file_;
+	mjpeg_file_handle						in_idx_file_;
 	boost::shared_ptr<mjpeg_file_header>	index_header_;
 	safe_ptr<core::frame_factory>			frame_factory_;
 	tbb::atomic<uint64_t>					framenum_;
@@ -85,23 +85,23 @@ struct replay_producer : public core::frame_producer
 	bool									seeked_;
 	const safe_ptr<diagnostics::graph>		graph_;
 
+#pragma warning(disable:4244)
 	explicit replay_producer(const safe_ptr<core::frame_factory>& frame_factory, const std::wstring& filename, const int sign, const long long start_frame, const long long last_frame, const float start_speed) 
 		: filename_(filename)
 		, frame_(core::basic_frame::empty())
 		, frame_factory_(frame_factory)
 	{
-		in_file_ = safe_fopen(narrow(filename_).c_str(), "rb", _SH_DENYNO);
+		in_file_ = safe_fopen((filename_).c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE);
 		if (in_file_ != NULL)
 		{
 			_off_t size = 0;
-			struct stat st;
-			in_idx_file_ = safe_fopen(narrow(boost::filesystem::wpath(filename_).replace_extension(L".idx").string()).c_str(), "rb", _SH_DENYNO);
+
+			in_idx_file_ = safe_fopen((boost::filesystem::wpath(filename_).replace_extension(L".idx").string()).c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE);
 			if (in_idx_file_ != NULL)
 			{
 				while (size == 0)
 				{
-					stat(narrow(boost::filesystem::wpath(filename_).replace_extension(L".idx").string()).c_str(), &st);
-					size = st.st_size;
+					size = boost::filesystem::file_size(boost::filesystem::wpath(filename_).replace_extension(L".idx").string());
 
 					if (size > 0) {
 						mjpeg_file_header* header;
@@ -169,8 +169,8 @@ struct replay_producer : public core::frame_producer
 			CASPAR_LOG(error) << print() << L" Video essence file " << filename_ << " not found";
 			throw file_not_found();
 		}
-		//frame_factory_ = frame_factory;
 	}
+#pragma warning(default:4244)
 	
 	caspar::safe_ptr<core::basic_frame> make_frame(uint8_t* frame_data, size_t size, size_t width, size_t height, bool drop_first_line)
 	{
@@ -349,13 +349,6 @@ struct replay_producer : public core::frame_producer
 		{
 			interlace_fields(field1, field2, dst, index_header_->width, index_header_->height, 4);
 		}
-	}
-
-	float modf(float a)
-	{
-		int intpart = (int)a;
-		float decpart = a - intpart;
-		return decpart;
 	}
 
 	virtual safe_ptr<core::basic_frame> receive(int hint)
@@ -693,6 +686,15 @@ struct replay_producer : public core::frame_producer
 		info.add(L"start-timecode", boost::posix_time::to_iso_wstring(index_header_->begin_timecode));
 		info.add(L"speed", speed_);
 		return info;
+	}
+
+	~replay_producer()
+	{
+		if (in_file_ != NULL)
+			safe_fclose(in_file_);
+
+		if (in_idx_file_ != NULL)
+			safe_fclose(in_idx_file_);
 	}
 };
 
