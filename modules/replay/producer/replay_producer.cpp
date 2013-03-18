@@ -387,7 +387,7 @@ struct replay_producer : public core::frame_producer
 			}
 		}
 		// IF speed is less than 0.5x and it's not time for a new frame
-		else if (abs_speed_ < 0.5f)
+		else if (abs_speed_ <= 0.5f)
 		{
 			if (result_framenum_ % frame_divider_ > 0)
 			{
@@ -614,7 +614,7 @@ struct replay_producer : public core::frame_producer
 
 			result_framenum_++;
 
-			make_frame(full_frame, (interlaced_ ? field1_size * 2 : field1_size), index_header_->width, index_header_->height, (framenum_ % 2 != 1));
+			make_frame(full_frame, (interlaced_ ? field1_size * 2 : field1_size), index_header_->width, index_header_->height, (interlaced_ ? (framenum_ % 2 != 1) : false));
 
 			if (field1 != NULL)
 				delete field1;
