@@ -69,7 +69,7 @@ struct replay_consumer : public core::frame_consumer
 	boost::posix_time::ptime				start_timecode_;
 
 
-#define REPLAY_FRAME_BUFFER					16
+#define REPLAY_FRAME_BUFFER					32
 #define REPLAY_JPEG_QUALITY					95
 
 public:
@@ -87,6 +87,7 @@ public:
 
 		graph_->set_color("frame-time", diagnostics::color(0.1f, 1.0f, 0.1f));
 		graph_->set_color("dropped-frame", diagnostics::color(0.3f, 0.6f, 0.3f));
+		graph_->set_color("buffered-video", diagnostics::color(0.1f, 0.1f, 0.8f));
 		graph_->set_text(print());
 		diagnostics::register_graph(graph_);
 
@@ -201,6 +202,8 @@ public:
 			{
 				mark_dropped();
 			}
+
+			graph_->set_value("buffered-video", (double)encode_executor_.size() / (double)encode_executor_.capacity());
 		}
 
 		return wrap_as_future(true);
