@@ -282,8 +282,19 @@ struct replay_producer : public core::frame_producer
 		}
 		else
 		{
-			framenum_ = framenum_ + (sign * frame_pos);
-			seek_index(in_idx_file_, (frame_pos) * sign, SEEK_CUR);
+			if (((long long)framenum_ + (sign * frame_pos)) > 0)
+			{
+				framenum_ = framenum_ + (sign * (((sign < 0) && interlaced_) ? frame_pos + 2 : frame_pos));
+			}
+			else
+			{
+				framenum_ = 0;
+			}
+			if (((long long)framenum_ + (sign * frame_pos)) > length_index())
+			{
+				framenum_ = length_index() - 4;
+			}
+			seek_index(in_idx_file_, framenum_, SEEK_SET);
 		}
 		first_framenum_ = framenum_;
 		seeked_ = true;
@@ -582,6 +593,8 @@ struct replay_producer : public core::frame_producer
 		move_to_next_frame();
 
 		seek_frame(in_file_, field1_pos, SEEK_SET);
+
+		//CASPAR_LOG(trace) << "FIELD POS: " << field1_pos;
 
 		mmx_uint8_t* field1 = NULL;
 		mmx_uint8_t* field2 = NULL;
