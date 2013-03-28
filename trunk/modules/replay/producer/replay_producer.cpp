@@ -440,7 +440,7 @@ struct replay_producer : public core::frame_producer
 					size_t field2_size = read_frame(in_file_, &field1_width, &field1_height, &field2);
 
 					full_frame = new mmx_uint8_t[field1_size * 2];
-					proper_interlace(field1, field2, full_frame);
+					//proper_interlace(field1, field2, full_frame);
 
 					make_frame(full_frame, field1_size * 2, index_header_->width, index_header_->height, false);
 
