@@ -158,6 +158,19 @@ l1:
 			}
 		});
 	}
+
+	void interlace_frames(const mmx_uint8_t* src1, const mmx_uint8_t* src2, mmx_uint8_t* dst, size_t width, size_t height, size_t stride)
+	{
+		size_t full_row = width * stride;
+		tbb::parallel_for(tbb::blocked_range<size_t>(0, height/2), [=](const tbb::blocked_range<size_t>& r)
+		{
+			for (auto i = r.begin(); i != r.end(); ++i)
+			{
+				memcpy((dst + i * 2 * full_row), (src1 + i * 2 * full_row), full_row);
+				memcpy((dst + (i * 2 + 1) * full_row), (src2 + (i * 2 + 1) * full_row), full_row);
+			}
+		});
+	}
 	
 	void field_double(const mmx_uint8_t* src, mmx_uint8_t* dst, size_t width, size_t height, size_t stride)
 	{
@@ -184,7 +197,8 @@ l1:
 	}
 
 #pragma warning(disable:4309 4244)
-	// max level is 64
+	// max level is 63
+	// level = 63 means 100% src1, level = 0 means 100% src2
 	void blend_images(const mmx_uint8_t* src1, mmx_uint8_t* src2, mmx_uint8_t* dst, size_t width, size_t height, size_t stride, uint8_t level)
 	{
 		uint32_t full_size = width * height * stride;
@@ -194,6 +208,21 @@ l1:
 			for (auto i = r.begin(); i != r.end(); i++)
 			{
 				dst[i] = (uint8_t)((((int)src1[i] * level_16) >> 6) + (((int)src2[i] * (64 - level_16)) >> 6));
+			}
+		});
+	}
+
+	void black_frame(mmx_uint8_t* dst, size_t width, size_t height)
+	{
+		uint32_t full_size = width * height;
+		tbb::parallel_for(tbb::blocked_range<size_t>(0, full_size), [=](const tbb::blocked_range<size_t>& r)
+		{
+			for (auto i = r.begin(); i != r.end(); i++)
+			{
+				dst[i*4] = 0;
+				dst[i*4+1] = 0;
+				dst[i*4+2] = 0;
+				dst[i*4+3] = 255;
 			}
 		});
 	}

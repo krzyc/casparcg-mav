@@ -73,9 +73,9 @@ struct replay_producer : public core::frame_producer
 	tbb::atomic<uint64_t>					first_framenum_;
 	tbb::atomic<uint64_t>					last_framenum_;
 	tbb::atomic<uint64_t>					result_framenum_;
-	uint8_t*								last_field_;
-	size_t									last_field_size_;
-	float									left_of_last_field_;
+	uint8_t*								leftovers_;
+	size_t									leftovers_size_;
+	int										leftovers_duration_;
 	bool									interlaced_;
 	float									speed_;
 	float									abs_speed_;
@@ -123,9 +123,9 @@ struct replay_producer : public core::frame_producer
 						framenum_ = 0;
 						last_framenum_ = 0;
 						first_framenum_ = 0;
-						left_of_last_field_ = 0;
-
-						last_field_ = NULL;
+						
+						leftovers_ = NULL;
+						leftovers_duration_ = 0;
 
 						seeked_ = false;
 
@@ -362,6 +362,107 @@ struct replay_producer : public core::frame_producer
 		}
 	}
 
+#pragma warning(disable:4244)
+	bool slow_motion_playback(uint8_t* result)
+	{
+		size_t frame_size = index_header_->width * index_header_->height * 4;
+		int filled = 0;
+		uint8_t* buffer1 = new uint8_t[frame_size];
+		uint8_t* buffer2 = new uint8_t[frame_size];
+		black_frame(buffer1, index_header_->width, index_header_->height);
+		std::copy_n(buffer1, frame_size, buffer2);
+
+		if (leftovers_ != NULL)
+		{
+			// result is in buffer2
+			blend_images(leftovers_, buffer1, buffer2, index_header_->width, index_header_->height, 4, 64);
+				
+			filled += leftovers_duration_;
+			if (filled > 64)
+			{
+				leftovers_duration_ = filled - 64;
+			}
+			else
+			{
+				delete leftovers_;
+				leftovers_ = NULL;
+				leftovers_duration_ = 0;
+			}
+		}
+
+		int frame_duration = ((1 / speed_) * 64.0f);
+
+		while (filled < 64)
+		{
+			long long field_pos = read_index(in_idx_file_);
+
+			if (field_pos == -1)
+			{	// There are no more frames
+
+				delete buffer1;
+				delete buffer2;
+
+				return false;
+			}
+
+			move_to_next_frame();
+
+			seek_frame(in_file_, field_pos, SEEK_SET);
+
+			mmx_uint8_t* field = NULL;
+			size_t field_width;
+			size_t field_height;
+			(void) read_frame(in_file_, &field_width, &field_height, &field);
+
+			// Interpolate the field to a full frame if this is a field-based mode
+			if (interlaced_)
+			{
+				field_double(field, buffer1, index_header_->width, index_header_->height, 4);
+				delete field;
+				field = new uint8_t[frame_size];
+				int drop_first_line = (framenum_ % 2 == 0 ? index_header_->width * 4 : 0);
+				std::copy_n(buffer1, frame_size - drop_first_line, field + drop_first_line);
+			}
+
+			uint8_t level = 0;
+			if (filled == 0)
+			{
+				level = 64;
+			}
+			else
+			{
+				level = (uint8_t)(((frame_duration + filled) <= 64 ? frame_duration : 64 - filled));
+			}
+			blend_images(field, buffer2, buffer1, index_header_->width, index_header_->height, 4, level);
+
+			if (leftovers_ != NULL)
+				delete leftovers_;
+
+			// Store the last frame as leftover
+			leftovers_ = field;
+
+			filled += frame_duration;
+
+			// Switch the buffers around so that the final result is always in buffer2
+			uint8_t* temp = buffer2;
+			buffer2 = buffer1;
+			buffer1 = temp;
+		}
+
+		if (filled >= 64)
+		{
+			leftovers_duration_ = filled - 64;
+		}
+
+		std::copy_n(buffer2, frame_size, result);
+
+		delete buffer1;
+		delete buffer2;
+
+		return true;
+	}
+#pragma warning(default:4244)
+
 	virtual safe_ptr<core::basic_frame> receive(int hint)
 	{
 		boost::timer frame_timer;
@@ -391,7 +492,7 @@ struct replay_producer : public core::frame_producer
 			}
 		}
 		// IF speed is less than 0.5x and it's not time for a new frame
-		else if (abs_speed_ <= 0.5f)
+		/* else if (abs_speed_ <= 0.5f)
 		{
 			if (result_framenum_ % frame_divider_ > 0)
 			{
@@ -399,180 +500,70 @@ struct replay_producer : public core::frame_producer
 				update_diag(frame_timer.elapsed());
 				return frame_; // Return previous frame
 			}
-		}
-		else if ((abs_speed_ > 0.5f) && (abs_speed_ < 1.0f))
+		} */
+		else if ((abs_speed_ > 0.0f) && (abs_speed_ < 1.0f))
 		{
-			// There is no last_field_ to base new field on
-			if (last_field_ == NULL)
+			size_t frame_size = index_header_->width * index_header_->height * 4;
+			uint8_t* field1 = new uint8_t[frame_size];
+			uint8_t* field2 = NULL;
+			uint8_t* full_frame = NULL;
+
+			if (interlaced_)
 			{
-				sync_to_frame();
+				field2 = new uint8_t[frame_size];
+				full_frame = new uint8_t[frame_size];
+			}
 
-				//printf("Generating new frame: %f\n", left_of_last_field_);
-
-				long long field1_pos = read_index(in_idx_file_);
-
-				if (field1_pos == -1)
-				{	// There are no more frames
-					result_framenum_++;
-					update_diag(frame_timer.elapsed());
-					return frame_;
-				}
-
-				move_to_next_frame();
-
-				seek_frame(in_file_, field1_pos, SEEK_SET);
-
-				mmx_uint8_t* field1 = NULL;
-				mmx_uint8_t* field2 = NULL;
-				mmx_uint8_t* full_frame = NULL;
-				size_t field1_width;
-				size_t field1_height;
-				size_t field1_size = read_frame(in_file_, &field1_width, &field1_height, &field1);
-
-				if (interlaced_)
-				{
-					long long field2_pos = read_index(in_idx_file_);
-
-					move_to_next_frame();
-
-					seek_frame(in_file_, field2_pos, SEEK_SET);
-
-					size_t field2_size = read_frame(in_file_, &field1_width, &field1_height, &field2);
-
-					full_frame = new mmx_uint8_t[field1_size * 2];
-					//proper_interlace(field1, field2, full_frame);
-
-					make_frame(full_frame, field1_size * 2, index_header_->width, index_header_->height, false);
-
-					last_field_size_ = field2_size + field1_size;
-				}
-				else
-				{
-					full_frame = field1;
-					last_field_size_ = field1_size;
-					field1 = NULL;
-				}
-
+			if (!slow_motion_playback(field1))
+			{
 				result_framenum_++;
-
-				last_field_ = full_frame;
-				left_of_last_field_ = ((1.0f - (abs_speed_ - 0.5f)) * 2.0f) - 1.0f;
-
-				if (left_of_last_field_ <= 0)
-				{
-					delete last_field_;
-					last_field_ = NULL;
-				}
-
-				if (field2 != NULL)
-					delete field2;
-				if (field1 != NULL)
-					delete field1;
-
 				update_diag(frame_timer.elapsed());
-
 				return frame_;
 			}
 			else
 			{
-				//printf("Left of last frame: %f\n", left_of_last_field_);
-				if (left_of_last_field_ >= 1.0f)
+				if (!interlaced_)
 				{
-					//printf("Using last frame\n");
-					make_frame(last_field_, last_field_size_, index_header_->width, index_header_->height, false);
-					left_of_last_field_ -= 1.0f;
+					make_frame(field1, frame_size, index_header_->width, index_header_->height, false);
+					delete field1;
 
-					if (left_of_last_field_ <= 0)
-					{
-						delete last_field_;
-						last_field_ = NULL;
-					}
-
-					update_diag(frame_timer.elapsed());
-
-					return frame_;
-				}
-
-				//printf("Blending with last frame\n");
-
-				long long field1_pos = read_index(in_idx_file_);
-
-				if (field1_pos == -1)
-				{	// There are no more frames
 					result_framenum_++;
 					update_diag(frame_timer.elapsed());
 					return frame_;
 				}
 
-				move_to_next_frame();
-
-				seek_frame(in_file_, field1_pos, SEEK_SET);
-
-				mmx_uint8_t* field1 = NULL;
-				mmx_uint8_t* field2 = NULL;
-				mmx_uint8_t* full_frame = NULL;
-				size_t field1_width;
-				size_t field1_height;
-				size_t field1_size = read_frame(in_file_, &field1_width, &field1_height, &field1);
-
-				if (interlaced_)
+				if (!slow_motion_playback(field2))
 				{
-					long long field2_pos = read_index(in_idx_file_);
-
-					move_to_next_frame();
-
-					seek_frame(in_file_, field2_pos, SEEK_SET);
-
-				
-					size_t field2_size = read_frame(in_file_, &field1_width, &field1_height, &field2);
-
-					full_frame = new mmx_uint8_t[field1_size * 2];
-					proper_interlace(field1, field2, full_frame);
-
-					last_field_size_ = field2_size + field1_size;
+					make_frame(field1, frame_size, index_header_->width, index_header_->height, false);
+					delete field1;
+					delete field2;
+					delete full_frame;
+					result_framenum_++;
+					update_diag(frame_timer.elapsed());
+					return frame_;
 				}
 				else
 				{
-					last_field_size_ = field1_size;
-					full_frame = field1;
-					field1 = NULL;
-				}
+					interlace_frames(field1, field2, full_frame, index_header_->width, index_header_->height, 4);
+					make_frame(full_frame, frame_size, index_header_->width, index_header_->height, false);
 
-				result_framenum_++;
-
-				mmx_uint8_t* final_frame = new mmx_uint8_t[last_field_size_];
-
-				blend_images(full_frame, last_field_, final_frame, index_header_->width, index_header_->height, 4, (uint8_t)((1.0f - left_of_last_field_) * 64.0f));
-
-				make_frame(final_frame, last_field_size_, index_header_->width, index_header_->height, false);
-
-				delete last_field_;
-				last_field_ = full_frame;
-				left_of_last_field_ = left_of_last_field_ + ((1.0f - (abs_speed_ - 0.5f)) * 2.0f) - 1.0f;
-
-				if (left_of_last_field_ <= 0)
-				{
-					delete last_field_;
-					last_field_ = NULL;
-				}
-
-				delete final_frame;
-				if (field2 != NULL)
-					delete field2;
-				if (field1 != NULL)
 					delete field1;
+					delete field2;
+					delete full_frame;
 
-				update_diag(frame_timer.elapsed());
+					result_framenum_++;
+					update_diag(frame_timer.elapsed());
 
-				return frame_;
+					return frame_;
+				}
 			}
 		}
 		else
 		{
-			if (last_field_ != NULL)
+			if (leftovers_ != NULL)
 			{
-				delete last_field_;
-				last_field_ = NULL;
+				delete leftovers_;
+				leftovers_ = NULL;
 			}
 		}
 
@@ -594,8 +585,6 @@ struct replay_producer : public core::frame_producer
 
 		seek_frame(in_file_, field1_pos, SEEK_SET);
 
-		//CASPAR_LOG(trace) << "FIELD POS: " << field1_pos;
-
 		mmx_uint8_t* field1 = NULL;
 		mmx_uint8_t* field2 = NULL;
 		mmx_uint8_t* full_frame = NULL;
@@ -603,7 +592,7 @@ struct replay_producer : public core::frame_producer
 		size_t field1_height;
 		size_t field1_size = read_frame(in_file_, &field1_width, &field1_height, &field1);
 
-		if ((!interlaced_) || (frame_divider_ > 1))
+		if (!interlaced_)
 		{
 			mmx_uint8_t* full_frame = NULL;
 
